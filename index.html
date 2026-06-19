@@ -94,7 +94,7 @@
     input[type="number"] { -moz-appearance: textfield; }
     input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
-    .safe-top { padding-top: env(safe-area-inset-top); }
+    .safe-top { padding-top: calc(env(safe-area-inset-top) + 8px); }
     .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
     .pb-safe { padding-bottom: calc(env(safe-area-inset-bottom) + 5.5rem); }
 
@@ -1065,9 +1065,9 @@ function WorkoutEditor({ workoutIdx, go }) {
 
   return (
     <div className="min-h-screen pb-safe">
-      <div className="sticky top-0 z-30 glass safe-top px-4 py-3 border-b border-neutral-200/60 dark:border-white/5">
+      <div className="sticky top-0 z-30 glass safe-top px-4 pb-3 border-b border-neutral-200/60 dark:border-white/5">
         <div className="flex items-center gap-3">
-          <IconBtn icon={I.back} onClick={()=>go('schedule')}/>
+          <button type="button" onClick={()=>go('schedule')} className="w-11 h-11 -ml-1 grid place-items-center rounded-full bg-neutral-100 dark:bg-neutral-800 active:scale-90 transition"><Icon d={I.back} className="w-5 h-5"/></button>
           <p className="font-bold flex-1">{isNew?'สร้างวันเทรนใหม่':'แก้ไขวันเทรน'}</p>
           <Btn onClick={save} className="px-5">บันทึก</Btn>
         </div>
@@ -1358,9 +1358,9 @@ function WorkoutLog({ workoutIdx, go }) {
 
   return (
     <div className="min-h-screen pb-safe">
-      <div className="sticky top-0 z-30 glass safe-top px-4 py-3 border-b border-neutral-200/60 dark:border-white/5">
+      <div className="sticky top-0 z-30 glass safe-top px-4 pb-3 border-b border-neutral-200/60 dark:border-white/5">
         <div className="flex items-center gap-3">
-          <button onClick={async()=>{ if(await uiConfirm('ออกจากการเทรน? (ข้อมูลที่ยังไม่บันทึกจะหาย)', {danger:true, okText:'ออก'})) go('dashboard'); }} className="w-9 h-9 grid place-items-center rounded-full bg-neutral-100 dark:bg-neutral-800"><Icon d={I.back} className="w-5 h-5"/></button>
+          <button type="button" onClick={async()=>{ if(await uiConfirm('ออกจากการเทรน? (ข้อมูลที่ยังไม่บันทึกจะหาย)', {danger:true, okText:'ออก'})) go('dashboard'); }} className="w-11 h-11 -ml-1 grid place-items-center rounded-full bg-neutral-100 dark:bg-neutral-800 active:scale-90 transition"><Icon d={I.back} className="w-5 h-5"/></button>
           <div className="flex-1">
             <p className="font-bold leading-tight">{workout.name}</p>
             <p className="text-xs text-neutral-500">{doneCount}/{totalCount} เซ็ต · <LiveDuration start={startRef.current}/></p>
@@ -2090,7 +2090,7 @@ function Settings({ go }) {
         <RowBtn label="🗑️ ล้างข้อมูลทั้งหมด" danger onClick={async()=>{ if(await uiConfirm('ลบข้อมูลทั้งหมดและเริ่มใหม่? (กู้คืนไม่ได้)', {danger:true, okText:'ลบทั้งหมด'})) { localStorage.removeItem(STORE_KEY); location.reload(); } }}/>
       </Card>
 
-      <p className="text-center text-xs text-neutral-400 mt-6">FitLog <b>v4</b> · เก็บข้อมูลในเครื่องนี้เท่านั้น<br/>อย่าลืม Export สำรองเป็นระยะ 💾</p>
+      <p className="text-center text-xs text-neutral-400 mt-6">FitLog <b>v5</b> · เก็บข้อมูลในเครื่องนี้เท่านั้น<br/>อย่าลืม Export สำรองเป็นระยะ 💾</p>
 
       <Sheet open={tool==='1rm'} onClose={()=>setTool(null)} title="1RM Calculator"><OneRMCalc/></Sheet>
       <Sheet open={tool==='plate'} onClose={()=>setTool(null)} title="Plate Calculator"><PlateCalc/></Sheet>
@@ -2160,8 +2160,9 @@ function TabBar({ tab, setTab }) {
    CUSTOM DIALOG (แทน confirm/alert ที่ iOS PWA บล็อก)
    ============================================================ */
 let _dlg = null;
-const uiConfirm = (message, opts={}) => _dlg ? _dlg.open({ type:'confirm', message, ...opts }) : Promise.resolve(window.confirm(message));
-const uiAlert   = (message, opts={}) => _dlg ? _dlg.open({ type:'alert', message, ...opts }) : Promise.resolve(window.alert(message));
+// fallback: ถ้า DialogHost ยังไม่พร้อม ให้ดำเนินการต่อ (resolve true) แทนการเรียก native dialog ที่ iOS PWA บล็อก
+const uiConfirm = (message, opts={}) => _dlg ? _dlg.open({ type:'confirm', message, ...opts }) : Promise.resolve(true);
+const uiAlert   = (message, opts={}) => _dlg ? _dlg.open({ type:'alert', message, ...opts }) : Promise.resolve();
 
 function DialogHost() {
   const [d, setD] = useState(null);
@@ -2208,29 +2209,32 @@ function App() {
 
   const ctx = { state, dispatch };
 
-  // ยังไม่ onboard
+  // เลือกเนื้อหาตาม route แต่ให้ DialogHost ติดตั้งตำแหน่งเดิมเสมอ (ไม่ unmount ตอนสลับหน้า)
+  let content;
   if (!state.profile || route.name==='onboard') {
-    return <AppCtx.Provider value={ctx}><Onboarding onDone={finishOnboard}/><DialogHost/></AppCtx.Provider>;
-  }
-
-  // full screen route: workout log
-  if (route.name==='log') {
-    return <AppCtx.Provider value={ctx}><WorkoutLog workoutIdx={route.workoutIdx} go={go}/><DialogHost/></AppCtx.Provider>;
-  }
-  if (route.name==='editWorkout') {
-    return <AppCtx.Provider value={ctx}><WorkoutEditor workoutIdx={route.workoutIdx} go={go}/><DialogHost/></AppCtx.Provider>;
+    content = <Onboarding onDone={finishOnboard}/>;
+  } else if (route.name==='log') {
+    content = <WorkoutLog workoutIdx={route.workoutIdx} go={go}/>;
+  } else if (route.name==='editWorkout') {
+    content = <WorkoutEditor workoutIdx={route.workoutIdx} go={go}/>;
+  } else {
+    content = (
+      <>
+        <div className="min-h-screen safe-top">
+          {tab==='dashboard' && <Dashboard go={go}/>}
+          {tab==='schedule' && <SchedulePage go={go}/>}
+          {tab==='library' && <Library/>}
+          {tab==='progress' && <Progress go={go}/>}
+          {tab==='settings' && <Settings go={go}/>}
+        </div>
+        <TabBar tab={tab} setTab={(t)=>{setTab(t); window.scrollTo(0,0);}}/>
+      </>
+    );
   }
 
   return (
     <AppCtx.Provider value={ctx}>
-      <div className="min-h-screen safe-top">
-        {tab==='dashboard' && <Dashboard go={go}/>}
-        {tab==='schedule' && <SchedulePage go={go}/>}
-        {tab==='library' && <Library/>}
-        {tab==='progress' && <Progress go={go}/>}
-        {tab==='settings' && <Settings go={go}/>}
-      </div>
-      <TabBar tab={tab} setTab={(t)=>{setTab(t); window.scrollTo(0,0);}}/>
+      {content}
       <DialogHost/>
     </AppCtx.Provider>
   );
