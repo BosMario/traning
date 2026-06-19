@@ -1,5 +1,5 @@
 // FitLog Service Worker — ทำให้เปิดใช้ได้แม้ไม่มีเน็ต (เช่น ที่ยิมสัญญาณแย่)
-const CACHE = 'fitlog-v3';
+const CACHE = 'fitlog-v4';
 
 // ไฟล์ในเครื่อง (app shell) — precache ตอนติดตั้ง
 const SHELL = [

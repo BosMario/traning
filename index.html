@@ -925,9 +925,9 @@ function SchedulePage({ go }) {
     const copy = { ...w, id:'w'+Date.now(), name: w.name.replace(/ \(สำเนา\)$/,'')+' (สำเนา)', exercises: w.exercises.map(e=>({...e})) };
     dispatch({ type:'UPDATE_PROGRAM', payload:{ ...program, workouts:[...program.workouts, copy] } });
   };
-  const deleteWorkout = (wi) => {
-    if (program.workouts.length<=1) { alert('ต้องมีอย่างน้อย 1 วันเทรน'); return; }
-    if (!confirm('ลบวันเทรนนี้? (วันในตารางที่ใช้อยู่จะกลายเป็นวันพัก)')) return;
+  const deleteWorkout = async (wi) => {
+    if (program.workouts.length<=1) { uiAlert('ต้องมีอย่างน้อย 1 วันเทรน'); return; }
+    if (!(await uiConfirm('ลบวันเทรนนี้? (วันในตารางที่ใช้อยู่จะกลายเป็นวันพัก)', {danger:true, okText:'ลบ'}))) return;
     const workouts = program.workouts.filter((_,i)=>i!==wi);
     const newSched = schedule.map(s => s==null ? null : s===wi ? null : s>wi ? s-1 : s);
     dispatch({ type:'UPDATE_PROGRAM', payload:{ ...program, workouts }, schedule:newSched });
@@ -1056,7 +1056,7 @@ function WorkoutEditor({ workoutIdx, go }) {
     setPicker(null);
   };
   const save = () => {
-    if (exs.length===0) { alert('เพิ่มอย่างน้อย 1 ท่าก่อนบันทึก'); return; }
+    if (exs.length===0) { uiAlert('เพิ่มอย่างน้อย 1 ท่าก่อนบันทึก'); return; }
     const workout = { id: existing?existing.id:('w'+Date.now()), name: name.trim()||'วันเทรน', type: existing?existing.type:'custom', exercises: exs };
     const workouts = isNew ? [...program.workouts, workout] : program.workouts.map((w,i)=> i===workoutIdx ? workout : w);
     dispatch({ type:'UPDATE_PROGRAM', payload:{ ...program, workouts } });
@@ -1333,7 +1333,7 @@ function WorkoutLog({ workoutIdx, go }) {
   };
   const addSet = (ei) => setEntries(es => es.map((e,i)=> i!==ei ? e : { ...e, sets:[...e.sets, { weight:e.sets[e.sets.length-1]?.weight||'', reps:'', rpe:'', done:false }] }));
   const delSet = (ei, si) => setEntries(es => es.map((e,i)=> i!==ei ? e : { ...e, sets: e.sets.filter((_,j)=>j!==si) }));
-  const removeEntry = (ei) => { if (!confirm('ลบท่านี้ออกจากการเทรน?')) return; setEntries(es => es.filter((_,i)=>i!==ei)); };
+  const removeEntry = async (ei) => { if (!(await uiConfirm('ลบท่านี้ออกจากการเทรน?', {danger:true, okText:'ลบ'}))) return; setEntries(es => es.filter((_,i)=>i!==ei)); };
   const onPick = (id) => {
     if (picker?.mode==='swap') { const ei=picker.ei; setEntries(es=>es.map((e,i)=> i!==ei ? e : { ...mkEntry(id, e.sets.length) })); }
     else setEntries(es=>[...es, mkEntry(id)]);
@@ -1344,13 +1344,13 @@ function WorkoutLog({ workoutIdx, go }) {
   const doneCount = entries.reduce((a,e)=>a+e.sets.filter(s=>s.done).length,0);
   const totalCount = entries.reduce((a,e)=>a+e.sets.length,0);
 
-  const finish = () => {
+  const finish = async () => {
     const session = {
       id: 'sess-'+Date.now(), date: Date.now(), workoutId: workout.id, name: workout.name,
       duration: Math.round((Date.now()-startRef.current)/1000), note,
       entries: entries.map(e=>({ exerciseId:e.exerciseId, sets: e.sets.filter(s=>s.done).map(s=>({ weight: toKg(s.weight, unit), reps:+s.reps||0, rpe:+s.rpe||null, done:true })) })).filter(e=>e.sets.length>0),
     };
-    if (session.entries.length === 0) { if(!confirm('ยังไม่ได้ติ๊กเซ็ตที่ทำเลย จะออกโดยไม่บันทึกไหม?')) return; go('dashboard'); return; }
+    if (session.entries.length === 0) { if(!(await uiConfirm('ยังไม่ได้ติ๊กเซ็ตที่ทำเลย จะออกโดยไม่บันทึกไหม?', {danger:true, okText:'ออก'}))) return; go('dashboard'); return; }
     const prs = computeNewPRs(session, sessions);
     dispatch({ type:'ADD_SESSION', payload: session });
     if (prs.length) setNewPRs(prs); else go('progress');
@@ -1360,7 +1360,7 @@ function WorkoutLog({ workoutIdx, go }) {
     <div className="min-h-screen pb-safe">
       <div className="sticky top-0 z-30 glass safe-top px-4 py-3 border-b border-neutral-200/60 dark:border-white/5">
         <div className="flex items-center gap-3">
-          <button onClick={()=>{ if(confirm('ออกจากการเทรน? (ข้อมูลที่ยังไม่บันทึกจะหาย)')) go('dashboard'); }} className="w-9 h-9 grid place-items-center rounded-full bg-neutral-100 dark:bg-neutral-800"><Icon d={I.back} className="w-5 h-5"/></button>
+          <button onClick={async()=>{ if(await uiConfirm('ออกจากการเทรน? (ข้อมูลที่ยังไม่บันทึกจะหาย)', {danger:true, okText:'ออก'})) go('dashboard'); }} className="w-9 h-9 grid place-items-center rounded-full bg-neutral-100 dark:bg-neutral-800"><Icon d={I.back} className="w-5 h-5"/></button>
           <div className="flex-1">
             <p className="font-bold leading-tight">{workout.name}</p>
             <p className="text-xs text-neutral-500">{doneCount}/{totalCount} เซ็ต · <LiveDuration start={startRef.current}/></p>
@@ -1948,7 +1948,7 @@ function Progress({ go }) {
               </div>
               <div className="flex gap-1 shrink-0">
                 <IconBtn icon={I.edit} onClick={()=>setEditSession(s)}/>
-                <IconBtn icon={I.trash} danger onClick={()=>{ if(confirm('ลบประวัตินี้?')) dispatch({type:'DELETE_SESSION', id:s.id}); }}/>
+                <IconBtn icon={I.trash} danger onClick={async()=>{ if(await uiConfirm('ลบประวัตินี้?', {danger:true, okText:'ลบ'})) dispatch({type:'DELETE_SESSION', id:s.id}); }}/>
               </div>
             </div>
             {s.note && <p className="text-xs text-neutral-500 mt-1 italic">"{s.note}"</p>}
@@ -2031,10 +2031,10 @@ function Settings({ go }) {
   const importJSON = (e) => {
     const file = e.target.files[0]; if(!file) return;
     const reader = new FileReader();
-    reader.onload = () => { try { const data = JSON.parse(reader.result); if(confirm('นำเข้าข้อมูลนี้? (ข้อมูลปัจจุบันจะถูกแทนที่)')) { dispatch({type:'REPLACE_ALL', payload:data}); alert('นำเข้าสำเร็จ ✅'); } } catch { alert('ไฟล์ไม่ถูกต้อง'); } };
+    reader.onload = async () => { try { const data = JSON.parse(reader.result); if(await uiConfirm('นำเข้าข้อมูลนี้? (ข้อมูลปัจจุบันจะถูกแทนที่)', {danger:true, okText:'นำเข้า'})) { dispatch({type:'REPLACE_ALL', payload:data}); uiAlert('นำเข้าสำเร็จ ✅'); } } catch { uiAlert('ไฟล์ไม่ถูกต้อง'); } };
     reader.readAsText(file);
   };
-  const regenerate = () => { const p = buildProgram(profile); dispatch({type:'SET_PROGRAM', payload:p, schedule: buildSchedule(profile.days)}); alert('สร้างโปรแกรมใหม่แล้ว!'); };
+  const regenerate = async () => { if(!(await uiConfirm('สร้างโปรแกรมใหม่จากโปรไฟล์? (โปรแกรมที่แก้ไขเองจะถูกแทนที่)', {okText:'สร้างใหม่'}))) return; const p = buildProgram(profile); dispatch({type:'SET_PROGRAM', payload:p, schedule: buildSchedule(profile.days)}); uiAlert('สร้างโปรแกรมใหม่แล้ว!'); };
   const toggleDark = () => { const d = !settings.dark; document.documentElement.classList.toggle('dark', d); dispatch({type:'SET_SETTINGS', payload:{dark:d}}); };
 
   return (
@@ -2087,10 +2087,10 @@ function Settings({ go }) {
           <Icon d={I.up} className="w-5 h-5 text-neutral-400"/>
           <input type="file" accept="application/json" onChange={importJSON} className="hidden"/>
         </label>
-        <RowBtn label="🗑️ ล้างข้อมูลทั้งหมด" danger onClick={()=>{ if(confirm('ลบข้อมูลทั้งหมดและเริ่มใหม่?')) { localStorage.removeItem(STORE_KEY); location.reload(); } }}/>
+        <RowBtn label="🗑️ ล้างข้อมูลทั้งหมด" danger onClick={async()=>{ if(await uiConfirm('ลบข้อมูลทั้งหมดและเริ่มใหม่? (กู้คืนไม่ได้)', {danger:true, okText:'ลบทั้งหมด'})) { localStorage.removeItem(STORE_KEY); location.reload(); } }}/>
       </Card>
 
-      <p className="text-center text-xs text-neutral-400 mt-6">FitLog <b>v3</b> · เก็บข้อมูลในเครื่องนี้เท่านั้น<br/>อย่าลืม Export สำรองเป็นระยะ 💾</p>
+      <p className="text-center text-xs text-neutral-400 mt-6">FitLog <b>v4</b> · เก็บข้อมูลในเครื่องนี้เท่านั้น<br/>อย่าลืม Export สำรองเป็นระยะ 💾</p>
 
       <Sheet open={tool==='1rm'} onClose={()=>setTool(null)} title="1RM Calculator"><OneRMCalc/></Sheet>
       <Sheet open={tool==='plate'} onClose={()=>setTool(null)} title="Plate Calculator"><PlateCalc/></Sheet>
@@ -2156,6 +2156,32 @@ function TabBar({ tab, setTab }) {
    14) ROOT APP
    ============================================================ */
 
+/* ============================================================
+   CUSTOM DIALOG (แทน confirm/alert ที่ iOS PWA บล็อก)
+   ============================================================ */
+let _dlg = null;
+const uiConfirm = (message, opts={}) => _dlg ? _dlg.open({ type:'confirm', message, ...opts }) : Promise.resolve(window.confirm(message));
+const uiAlert   = (message, opts={}) => _dlg ? _dlg.open({ type:'alert', message, ...opts }) : Promise.resolve(window.alert(message));
+
+function DialogHost() {
+  const [d, setD] = useState(null);
+  useEffect(() => { _dlg = { open: (cfg) => new Promise(resolve => setD({ ...cfg, resolve })) }; return () => { _dlg = null; }; }, []);
+  if (!d) return null;
+  const done = (v) => { const r = d.resolve; setD(null); r(v); };
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center p-6 bg-black/60 fade-in" onClick={()=>done(d.type==='confirm'?false:undefined)}>
+      <div className="bg-white dark:bg-neutral-900 rounded-2xl p-5 w-full max-w-xs pop shadow-2xl" onClick={e=>e.stopPropagation()}>
+        {d.title && <p className="font-bold text-lg mb-1">{d.title}</p>}
+        <p className="text-[15px] text-neutral-700 dark:text-neutral-300 whitespace-pre-wrap leading-relaxed">{d.message}</p>
+        <div className="flex gap-2 mt-5">
+          {d.type==='confirm' && <Btn variant="ghost" onClick={()=>done(false)} className="flex-1">{d.cancelText||'ยกเลิก'}</Btn>}
+          <Btn variant={d.danger?'danger':'primary'} onClick={()=>done(d.type==='confirm'?true:undefined)} className="flex-1">{d.okText||'ตกลง'}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [state, dispatch] = useReducer(reducer, null, () => mergeState(loadState()));
   const [tab, setTab] = useState('dashboard');
@@ -2184,15 +2210,15 @@ function App() {
 
   // ยังไม่ onboard
   if (!state.profile || route.name==='onboard') {
-    return <AppCtx.Provider value={ctx}><Onboarding onDone={finishOnboard}/></AppCtx.Provider>;
+    return <AppCtx.Provider value={ctx}><Onboarding onDone={finishOnboard}/><DialogHost/></AppCtx.Provider>;
   }
 
   // full screen route: workout log
   if (route.name==='log') {
-    return <AppCtx.Provider value={ctx}><WorkoutLog workoutIdx={route.workoutIdx} go={go}/></AppCtx.Provider>;
+    return <AppCtx.Provider value={ctx}><WorkoutLog workoutIdx={route.workoutIdx} go={go}/><DialogHost/></AppCtx.Provider>;
   }
   if (route.name==='editWorkout') {
-    return <AppCtx.Provider value={ctx}><WorkoutEditor workoutIdx={route.workoutIdx} go={go}/></AppCtx.Provider>;
+    return <AppCtx.Provider value={ctx}><WorkoutEditor workoutIdx={route.workoutIdx} go={go}/><DialogHost/></AppCtx.Provider>;
   }
 
   return (
@@ -2205,6 +2231,7 @@ function App() {
         {tab==='settings' && <Settings go={go}/>}
       </div>
       <TabBar tab={tab} setTab={(t)=>{setTab(t); window.scrollTo(0,0);}}/>
+      <DialogHost/>
     </AppCtx.Provider>
   );
 }
