@@ -676,7 +676,7 @@ const MuscleBadge = ({ m, secondary }) => (
 
 function Onboarding({ onDone }) {
   const [step, setStep] = useState(0);
-  const [f, setF] = useState({ name:'', sex:'male', age:25, height:170, weight:70, goal:'hypertrophy', level:'beginner', days:3, equip:'dumbbell' });
+  const [f, setF] = useState({ name:'', sex:'male', age:'25', height:'170', weight:'70', goal:'hypertrophy', level:'beginner', days:3, equip:'dumbbell' });
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
 
   const steps = [
@@ -700,9 +700,9 @@ function Onboarding({ onDone }) {
         </div>
       </Field>
       <div className="grid grid-cols-3 gap-3">
-        <Field label="อายุ"><input type="number" inputMode="numeric" value={f.age} onChange={e=>set('age',+e.target.value)} className="input"/></Field>
-        <Field label="ส่วนสูง (ซม.)"><input type="number" inputMode="numeric" value={f.height} onChange={e=>set('height',+e.target.value)} className="input"/></Field>
-        <Field label="น้ำหนัก (กก.)"><input type="number" inputMode="decimal" value={f.weight} onChange={e=>set('weight',+e.target.value)} className="input"/></Field>
+        <Field label="อายุ"><input type="number" inputMode="numeric" value={f.age} onChange={e=>set('age',e.target.value)} className="input"/></Field>
+        <Field label="ส่วนสูง (ซม.)"><input type="number" inputMode="numeric" value={f.height} onChange={e=>set('height',e.target.value)} className="input"/></Field>
+        <Field label="น้ำหนัก (กก.)"><input type="number" inputMode="decimal" value={f.weight} onChange={e=>set('weight',e.target.value)} className="input"/></Field>
       </div>
     </div>,
     // 2 เป้าหมาย
@@ -743,7 +743,7 @@ function Onboarding({ onDone }) {
     </div>,
   ];
 
-  const next = () => step < steps.length-1 ? setStep(step+1) : onDone(f);
+  const next = () => step < steps.length-1 ? setStep(step+1) : onDone({ ...f, age:+f.age||0, height:+f.height||0, weight:+f.weight||0 });
 
   return (
     <div className="min-h-screen flex flex-col safe-top">
@@ -1225,10 +1225,23 @@ function ExerciseDetail({ e, onClose }) {
    10) WORKOUT LOGGING + REST TIMER
    ============================================================ */
 
+// ===== เสียง (iOS: ต้องแชร์ AudioContext ตัวเดียว + ปลดล็อกด้วย user gesture + resume) =====
+let _audioCtx = null;
+function getAudioCtx() {
+  if (!_audioCtx) { try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
+  return _audioCtx;
+}
+function unlockAudio() {
+  const ctx = getAudioCtx(); if (!ctx) return;
+  if (ctx.state === 'suspended') ctx.resume().catch(()=>{});
+  // เล่นบัฟเฟอร์เงียบ 1 ครั้งเพื่อปลดล็อก audio บน iOS
+  try { const b = ctx.createBuffer(1,1,22050); const s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.destination); s.start(0); } catch {}
+}
 function beep(times = 1) {
+  const ctx = getAudioCtx(); if (!ctx) return;
+  if (ctx.state === 'suspended') ctx.resume().catch(()=>{});
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    let t = ctx.currentTime;
+    let t = ctx.currentTime + 0.02;
     for (let i=0;i<times;i++){
       const o = ctx.createOscillator(); const g = ctx.createGain();
       o.connect(g); g.connect(ctx.destination);
@@ -1240,34 +1253,56 @@ function beep(times = 1) {
     }
   } catch {}
 }
+// ปลดล็อกเสียงครั้งแรกที่ผู้ใช้แตะจอ (iOS อนุญาตเล่นเสียงเฉพาะหลังมี gesture)
+if (typeof document !== 'undefined') {
+  const _u = () => unlockAudio();
+  document.addEventListener('touchend', _u, { once: true, passive: true });
+  document.addEventListener('pointerdown', _u, { once: true });
+}
 
 function RestTimer({ seconds, onClose, sound }) {
+  const remainRef = useRef(seconds * 1000);   // เวลาที่เหลือ (ms) — ใช้ตอน pause
+  const endRef = useRef(Date.now() + seconds * 1000);
+  const firedRef = useRef(false);
   const [left, setLeft] = useState(seconds);
   const [running, setRunning] = useState(true);
+
+  // ใช้ wall-clock (Date.now) คำนวณเวลาเหลือ → แม่นแม้ setInterval ถูก throttle ตอนสลับแอป
   useEffect(() => {
     if (!running) return;
-    if (left <= 0) { if (sound) beep(2); onClose(); return; }
-    const t = setTimeout(()=>setLeft(l=>l-1), 1000);
-    return ()=>clearTimeout(t);
-  }, [left, running]);
-  const pct = (left / seconds) * 100;
+    endRef.current = Date.now() + remainRef.current;
+    const tick = () => {
+      const ms = endRef.current - Date.now();
+      setLeft(Math.max(0, Math.ceil(ms / 1000)));
+      if (ms <= 0 && !firedRef.current) { firedRef.current = true; if (sound) beep(2); onClose(); }
+    };
+    tick();
+    const id = setInterval(tick, 250);
+    // เผื่อกลับมาจาก background ให้คำนวณใหม่ทันที
+    const onVis = () => { if (document.visibilityState === 'visible') tick(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVis); remainRef.current = Math.max(0, endRef.current - Date.now()); };
+  }, [running]);
+
+  const addTime = () => { remainRef.current += 15000; endRef.current += 15000; setLeft(l => l + 15); };
+  const pct = Math.min(100, (left / seconds) * 100);
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 px-4 pb-safe">
-      <div className="bg-neutral-900 dark:bg-neutral-800 text-white rounded-2xl p-4 shadow-2xl mb-24 fade-in">
+      <div className={`text-white rounded-2xl p-4 shadow-2xl mb-24 fade-in transition-colors ${left<=3 && left>0 ? 'bg-blue-600' : 'bg-neutral-900 dark:bg-neutral-800'}`}>
         <div className="flex items-center justify-between">
-          <span className="text-sm text-neutral-400">พักระหว่างเซ็ต</span>
-          <button onClick={onClose} className="text-neutral-400"><Icon d={I.x} className="w-5 h-5"/></button>
+          <span className="text-sm text-neutral-300">พักระหว่างเซ็ต</span>
+          <button type="button" onClick={onClose} className="w-9 h-9 -mr-1 grid place-items-center text-neutral-300"><Icon d={I.x} className="w-5 h-5"/></button>
         </div>
         <div className="flex items-center gap-4 mt-1">
           <span className="text-4xl font-extrabold tabular-nums">{fmtClock(left)}</span>
           <div className="flex-1 flex gap-2">
-            <button onClick={()=>setLeft(l=>l+15)} className="flex-1 bg-white/10 rounded-lg py-2 text-sm font-medium">+15</button>
-            <button onClick={()=>setRunning(r=>!r)} className="w-11 grid place-items-center bg-white/10 rounded-lg"><Icon d={running?I.pause:I.play} className="w-5 h-5"/></button>
-            <button onClick={onClose} className="flex-1 bg-blue-600 rounded-lg py-2 text-sm font-medium">ข้าม</button>
+            <button type="button" onClick={addTime} className="flex-1 bg-white/15 rounded-lg py-2.5 text-sm font-medium active:scale-95">+15</button>
+            <button type="button" onClick={()=>setRunning(r=>!r)} className="w-12 grid place-items-center bg-white/15 rounded-lg active:scale-95"><Icon d={running?I.pause:I.play} className="w-5 h-5"/></button>
+            <button type="button" onClick={onClose} className="flex-1 bg-blue-500 rounded-lg py-2.5 text-sm font-medium active:scale-95">ข้าม</button>
           </div>
         </div>
-        <div className="h-1.5 bg-white/10 rounded-full mt-3 overflow-hidden">
-          <div className="h-full bg-blue-500 transition-all" style={{width:`${pct}%`}}/>
+        <div className="h-1.5 bg-white/15 rounded-full mt-3 overflow-hidden">
+          <div className="h-full bg-blue-400 transition-all duration-200" style={{width:`${pct}%`}}/>
         </div>
       </div>
     </div>
@@ -1317,10 +1352,21 @@ function WorkoutLog({ workoutIdx, go }) {
     });
   });
 
+  // Wake Lock: ขอใหม่อัตโนมัติเมื่อกลับมาจากการสลับแอป (iOS ปล่อย lock เองตอน hidden)
   useEffect(() => {
-    let lock;
-    (async()=>{ try { if ('wakeLock' in navigator) { lock = await navigator.wakeLock.request('screen'); wakeRef.current = lock; } } catch {} })();
-    return () => { try { lock && lock.release(); } catch {} };
+    let lock = null, active = true;
+    const acquire = async () => {
+      try {
+        if (active && 'wakeLock' in navigator && document.visibilityState === 'visible') {
+          lock = await navigator.wakeLock.request('screen'); wakeRef.current = lock;
+          lock.addEventListener && lock.addEventListener('release', () => { lock = null; });
+        }
+      } catch {}
+    };
+    acquire();
+    const onVis = () => { if (document.visibilityState === 'visible' && !lock) acquire(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { active = false; document.removeEventListener('visibilitychange', onVis); try { lock && lock.release(); } catch {} };
   }, []);
 
   if (!workout) return <Screen><Empty title="ไม่พบโปรแกรม" sub="กลับไปหน้าหลัก"/><Btn onClick={()=>go('dashboard')} className="w-full mt-4">กลับหน้าหลัก</Btn></Screen>;
@@ -1329,7 +1375,7 @@ function WorkoutLog({ workoutIdx, go }) {
   const toggleDone = (ei, si) => {
     setEntries(es => es.map((e,i)=> i!==ei ? e : { ...e, sets: e.sets.map((s,j)=> j!==si ? s : { ...s, done: !s.done }) }));
     const e = entries[ei];
-    if (!e.sets[si].done) { if (settings.sound) beep(1); setRest({ sec: e.rest, key: Date.now() }); }
+    if (!e.sets[si].done) { unlockAudio(); if (settings.sound) beep(1); setRest({ sec: e.rest, key: Date.now() }); }
   };
   const addSet = (ei) => setEntries(es => es.map((e,i)=> i!==ei ? e : { ...e, sets:[...e.sets, { weight:e.sets[e.sets.length-1]?.weight||'', reps:'', rpe:'', done:false }] }));
   const delSet = (ei, si) => setEntries(es => es.map((e,i)=> i!==ei ? e : { ...e, sets: e.sets.filter((_,j)=>j!==si) }));
@@ -2090,7 +2136,7 @@ function Settings({ go }) {
         <RowBtn label="🗑️ ล้างข้อมูลทั้งหมด" danger onClick={async()=>{ if(await uiConfirm('ลบข้อมูลทั้งหมดและเริ่มใหม่? (กู้คืนไม่ได้)', {danger:true, okText:'ลบทั้งหมด'})) { localStorage.removeItem(STORE_KEY); location.reload(); } }}/>
       </Card>
 
-      <p className="text-center text-xs text-neutral-400 mt-6">FitLog <b>v5</b> · เก็บข้อมูลในเครื่องนี้เท่านั้น<br/>อย่าลืม Export สำรองเป็นระยะ 💾</p>
+      <p className="text-center text-xs text-neutral-400 mt-6">FitLog <b>v6</b> · เก็บข้อมูลในเครื่องนี้เท่านั้น<br/>อย่าลืม Export สำรองเป็นระยะ 💾</p>
 
       <Sheet open={tool==='1rm'} onClose={()=>setTool(null)} title="1RM Calculator"><OneRMCalc/></Sheet>
       <Sheet open={tool==='plate'} onClose={()=>setTool(null)} title="Plate Calculator"><PlateCalc/></Sheet>
