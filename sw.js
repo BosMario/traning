@@ -1,5 +1,5 @@
 // FitLog Service Worker — ทำให้เปิดใช้ได้แม้ไม่มีเน็ต (เช่น ที่ยิมสัญญาณแย่)
-const CACHE = 'fitlog-v6';
+const CACHE = 'fitlog-v7';
 
 // ไฟล์ในเครื่อง (app shell) — precache ตอนติดตั้ง
 const SHELL = [
@@ -42,6 +42,11 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+
+  // แตะเฉพาะไฟล์ในเครื่อง + CDN ที่รู้จัก — ปล่อยอย่างอื่น (เช่น YouTube) ให้เบราว์เซอร์โหลดเอง
+  const sameOrigin = url.origin === self.location.origin;
+  const isCDN = /(^|\.)unpkg\.com$|(^|\.)jsdelivr\.net$|(^|\.)cdn\.tailwindcss\.com$/.test(url.host);
+  if (!sameOrigin && !isCDN) return;
 
   // นำทาง (เปิดหน้า) → network-first, ตกมาที่ index.html ใน cache
   if (req.mode === 'navigate') {
