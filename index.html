@@ -1,0 +1,2250 @@
+<!DOCTYPE html>
+<html lang="th" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="FitLog" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <link rel="apple-touch-icon" href="icon-180.png" />
+  <link rel="icon" type="image/png" href="icon-180.png" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <title>FitLog — เทรนนิ่งส่วนตัว</title>
+
+  <script>
+    // จับ error ทุกชนิดมาโชว์บนจอ (ช่วย debug บนมือถือที่เปิด console ไม่ได้)
+    window.__err = function(msg){
+      var el = document.getElementById('root');
+      if(el) el.innerHTML = '<div style="padding:24px;font:14px -apple-system,sans-serif;color:#fff;background:#7f1d1d;min-height:100vh;white-space:pre-wrap;word-break:break-word">⚠️ เกิดข้อผิดพลาด:\n\n'+msg+'</div>';
+    };
+    window.addEventListener('error', function(e){
+      window.__err((e.message||e.error||'unknown')+'\n'+(e.filename||'')+':'+(e.lineno||''));
+    });
+    window.addEventListener('unhandledrejection', function(e){ window.__err('Promise: '+(e.reason&&e.reason.message||e.reason)); });
+    // watchdog: ถ้าหลังโหลดเสร็จ 6 วิ จอยังว่าง = library โหลดไม่สำเร็จ
+    window.addEventListener('load', function(){
+      setTimeout(function(){
+        var r = document.getElementById('root');
+        if(r && r.children.length===0){
+          var miss = [];
+          if(typeof React==='undefined') miss.push('React');
+          if(typeof ReactDOM==='undefined') miss.push('ReactDOM');
+          if(typeof Babel==='undefined') miss.push('Babel');
+          if(typeof Chart==='undefined') miss.push('Chart.js');
+          window.__err('แอปยังไม่ขึ้น\n\nLibrary ที่โหลดไม่สำเร็จ: '+(miss.length?miss.join(', '):'(โหลดครบ แต่ render ไม่ขึ้น)')+'\n\nเช็ก: ต่ออินเทอร์เน็ตอยู่ไหม / ลองเปิดผ่าน Live Server หรือ deploy แทนการดับเบิลคลิกไฟล์');
+        }
+      }, 6000);
+    });
+  </script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script>
+    // ลงทะเบียน Service Worker เพื่อให้เปิดได้แม้ไม่มีเน็ต (ทำงานเฉพาะตอนเสิร์ฟผ่าน http/https)
+    if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+      window.addEventListener('load', function(){
+        navigator.serviceWorker.register('sw.js').catch(function(e){ console.warn('SW fail', e); });
+      });
+    }
+  </script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { DEFAULT: '#3b82f6', dark: '#2563eb' },
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    :root { color-scheme: light dark; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      overscroll-behavior-y: none;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Noto Sans Thai", sans-serif;
+    }
+    /* iOS: ป้องกัน zoom เวลาแตะ input ต้อง font >= 16px */
+    input, select, textarea { font-size: 16px; }
+    input[type="number"] { -moz-appearance: textfield; }
+    input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+    .safe-top { padding-top: env(safe-area-inset-top); }
+    .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+    .pb-safe { padding-bottom: calc(env(safe-area-inset-bottom) + 5.5rem); }
+
+    /* ScrollBar ซ่อนแต่ scroll ได้ */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    .fade-in { animation: fadeIn .25s ease both; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    .pop { animation: pop .2s ease both; }
+    @keyframes pop { 0% { transform: scale(.96); opacity:.6 } 100% { transform: scale(1); opacity:1 } }
+
+    /* allow text select ในช่องกรอก */
+    input, textarea { -webkit-user-select: text; user-select: text; }
+  </style>
+</head>
+<body class="bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100">
+  <div id="root"></div>
+
+  <script type="text/plain" id="app-code">
+const { useState, useEffect, useReducer, useRef, useMemo, useContext, createContext, useCallback } = React;
+
+/* ============================================================
+   1) DATA MODEL & SEED DATA
+   ============================================================ */
+
+// --- หมวดกล้ามเนื้อ ---
+const MUSCLES = {
+  chest: 'อก', back: 'หลัง', shoulders: 'ไหล่', biceps: 'ไบเซ็ปส์',
+  triceps: 'ไตรเซ็ปส์', quads: 'ต้นขาหน้า', hamstrings: 'ต้นขาหลัง',
+  glutes: 'สะโพก', calves: 'น่อง', core: 'แกนกลาง', traps: 'บ่า', forearms: 'ปลายแขน',
+};
+
+const EQUIP_TH = { barbell:'บาร์เบล', dumbbell:'ดัมเบล', machine:'เครื่อง', bodyweight:'บอดี้เวท', band:'ยางยืด' };
+
+// helper สร้าง exercise object
+const ex = (id, en, th, primary, secondary, type, equip, cues, mistakes) => ({
+  id, en, th, primary, secondary, type, equip, cues, mistakes,
+});
+
+// --- คลังท่า (~45 ท่า ครอบคลุมทุกกลุ่มกล้าม) ---
+const EXERCISES = [
+  // CHEST
+  ex('bench-press','Barbell Bench Press','เบนช์เพรส (บาร์เบล)','chest',['triceps','shoulders'],'compound','barbell',
+    ['ตั้งสะบักให้แน่น เก็บลงล่าง','เท้ายันพื้นมั่นคง','ลดบาร์ลงแตะอกช่วงราวนม','ดันขึ้นโดยอกนำ ไม่งอข้อมือ'],
+    ['ก้นเด้งหลุดเบาะ','ลดบาร์เร็วเกินจนกระแทกอก','ศอกบานเป็นมุม 90°']),
+  ex('incline-db-press','Incline Dumbbell Press','อินไคลน์ ดัมเบลเพรส','chest',['shoulders','triceps'],'compound','dumbbell',
+    ['ตั้งเบาะ ~30°','ดัมเบลอยู่แนวอกบน','บีบอกตอนดันขึ้น','คุมจังหวะลงช้า'],
+    ['ตั้งเบาะชันเกินกลายเป็นเล่นไหล่','ช่วงลงตื้นเกินไป']),
+  ex('db-fly','Dumbbell Fly','ดัมเบลฟลาย','chest',[],'isolation','dumbbell',
+    ['ศอกงอเล็กน้อยค้างไว้','กางแขนเป็นวงกว้าง','รู้สึกยืดที่อก','บีบอกกลับเข้ามา'],
+    ['งอศอกเยอะจนกลายเป็นเพรส','ใช้น้ำหนักเกินจนเสียฟอร์ม']),
+  ex('pushup','Push-up','วิดพื้น','chest',['triceps','core'],'compound','bodyweight',
+    ['ลำตัวตรงเป็นแนวเดียว','มือกว้างกว่าไหล่เล็กน้อย','ลดลงจนอกเกือบแตะพื้น','เกร็งแกนกลาง'],
+    ['สะโพกตก','คอยื่น','ลงตื้น']),
+  ex('cable-crossover','Cable Crossover','เคเบิลครอสโอเวอร์','chest',[],'isolation','machine',
+    ['โน้มตัวไปหน้าเล็กน้อย','ดึงมือมาไขว้กลางลำตัว','บีบค้าง 1 วิ','คุมขากลับ'],
+    ['ใช้แรงเหวี่ยง','ยืนตรงเกินไปทำให้แรงตึงหาย']),
+
+  // BACK
+  ex('deadlift','Conventional Deadlift','เดดลิฟต์','back',['glutes','hamstrings','traps'],'compound','barbell',
+    ['บาร์ชิดหน้าแข้ง','หลังตรงตั้งแต่เริ่ม','ดันพื้นด้วยส้นเท้า','ล็อกสะโพกท้ายจังหวะ'],
+    ['หลังโก่ง','บาร์ลอยห่างตัว','กระตุกขึ้นด้วยหลังล่าง']),
+  ex('pullup','Pull-up','พูลอัพ','back',['biceps'],'compound','bodyweight',
+    ['จับกว้างกว่าไหล่','ดึงสะบักลงก่อน','คางเลยราว','ลงช้าควบคุม'],
+    ['เหวี่ยงตัว','ขึ้นไม่สุด','ปล่อยตกเร็ว']),
+  ex('barbell-row','Barbell Row','บาร์เบลโรว์','back',['biceps','traps'],'compound','barbell',
+    ['โน้มตัว ~45°','หลังตรง','ดึงบาร์เข้าท้องส่วนล่าง','บีบสะบัก'],
+    ['ยืดตัวขึ้นใช้แรงเหวี่ยง','ดึงเข้าอกสูงไป','หลังงอ']),
+  ex('lat-pulldown','Lat Pulldown','แลทพูลดาวน์','back',['biceps'],'compound','machine',
+    ['อกตั้ง โน้มหลังเล็กน้อย','ดึงบาร์ลงถึงราวอก','ศอกชี้ลง','คุมขึ้นช้า'],
+    ['เอนหลังเยอะ','ดึงด้วยแขนล้วน','ปล่อยพรวด']),
+  ex('seated-row','Seated Cable Row','นั่งเคเบิลโรว์','back',['biceps'],'compound','machine',
+    ['อกตั้ง หลังตรง','ดึงเข้าท้อง','บีบสะบักค้าง','คุมยืดกลับ'],
+    ['โยกตัวหน้าหลัง','งอหลัง','ดึงสั้น']),
+  ex('face-pull','Face Pull','เฟซพูล','back',['shoulders'],'isolation','machine',
+    ['ตั้งเชือกสูงระดับหน้า','ดึงเข้าหาหน้าผาก','ศอกกางสูง','บีบหลังบน'],
+    ['ใช้น้ำหนักมากเกิน','ดึงต่ำเกินไป']),
+
+  // SHOULDERS
+  ex('ohp','Overhead Press','โอเวอร์เฮดเพรส','shoulders',['triceps'],'compound','barbell',
+    ['เกร็งแกนกลาง ก้นไม่แอ่น','บาร์เริ่มที่ราวไหปลาร้า','ดันขึ้นตรงเหนือหัว','หุบหน้าเล็กน้อยให้บาร์ผ่าน'],
+    ['แอ่นหลังมาก','ดันบาร์ไปข้างหน้า','ล็อกศอกกระแทก']),
+  ex('db-shoulder-press','Dumbbell Shoulder Press','ดัมเบลโชว์เดอร์เพรส','shoulders',['triceps'],'compound','dumbbell',
+    ['นั่งหลังพิงตรง','ดัมเบลระดับหู','ดันขึ้นจนเกือบชน','คุมลง'],
+    ['แอ่นหลัง','ลงตื้น']),
+  ex('lateral-raise','Lateral Raise','ยกข้าง','shoulders',[],'isolation','dumbbell',
+    ['ศอกงอเล็กน้อย','ยกข้างจนระดับไหล่','เทข้อมือเล็กน้อยเหมือนเทน้ำ','ลงช้า'],
+    ['เหวี่ยงตัว','ยกสูงเกินไหล่','ใช้น้ำหนักเกิน']),
+  ex('rear-delt-fly','Rear Delt Fly','รีเดลต์ฟลาย','shoulders',['back'],'isolation','dumbbell',
+    ['โน้มตัวไปหน้า','กางแขนออกข้าง','บีบหลังไหล่','คุมกลับ'],
+    ['ใช้หลังช่วยมาก','งอศอกเยอะ']),
+  ex('front-raise','Front Raise','ยกหน้า','shoulders',[],'isolation','dumbbell',
+    ['ยกขึ้นด้านหน้าระดับไหล่','คุมจังหวะ','ไม่แกว่งตัว'],
+    ['เหวี่ยง','ยกสูงเกิน']),
+
+  // BICEPS
+  ex('barbell-curl','Barbell Curl','บาร์เบลเคิร์ล','biceps',['forearms'],'isolation','barbell',
+    ['ศอกแนบลำตัว','ม้วนขึ้นบีบไบเซ็ปส์','คุมลงช้า','ไม่แกว่งตัว'],
+    ['เหวี่ยงสะโพก','ศอกเลื่อนไปหน้า']),
+  ex('db-curl','Dumbbell Curl','ดัมเบลเคิร์ล','biceps',['forearms'],'isolation','dumbbell',
+    ['หงายข้อมือตอนขึ้น','บีบสุด','สลับซ้ายขวาหรือพร้อมกัน','ลงช้า'],
+    ['แกว่ง','ลงไม่สุด']),
+  ex('hammer-curl','Hammer Curl','แฮมเมอร์เคิร์ล','biceps',['forearms'],'isolation','dumbbell',
+    ['จับแนวกลาง (ฝ่ามือเข้าหากัน)','ศอกนิ่ง','ม้วนขึ้น','คุมลง'],
+    ['แกว่งตัว','ศอกขยับ']),
+  ex('preacher-curl','Preacher Curl','พรีชเชอร์เคิร์ล','biceps',[],'isolation','machine',
+    ['วางต้นแขนแนบเบาะ','ม้วนขึ้นเต็มช่วง','คุมลงช้ามาก','ไม่ล็อกศอกกระแทก'],
+    ['ลงเร็วเกิน','ยกก้นช่วย']),
+
+  // TRICEPS
+  ex('close-grip-bench','Close-grip Bench Press','โคลสกริปเบนช์','triceps',['chest'],'compound','barbell',
+    ['จับกว้างประมาณไหล่','ศอกแนบลำตัว','ลดลงราวอกล่าง','ดันด้วยไตรเซ็ปส์'],
+    ['จับแคบเกินจนข้อมือเจ็บ','ศอกบาน']),
+  ex('tricep-pushdown','Tricep Pushdown','ไตรเซ็ปส์พุชดาวน์','triceps',[],'isolation','machine',
+    ['ศอกแนบลำตัว','ดันลงจนสุดบีบไตรเซ็ปส์','คุมขึ้นช้า'],
+    ['ศอกกางออก','โน้มตัวกดด้วยน้ำหนักตัว']),
+  ex('overhead-ext','Overhead Tricep Extension','โอเวอร์เฮดไตรเซ็ปส์','triceps',[],'isolation','dumbbell',
+    ['ยกเหนือหัว','ศอกชี้ขึ้นนิ่ง','ลดหลังศีรษะ','เหยียดขึ้นบีบ'],
+    ['ศอกบานออก','แอ่นหลัง']),
+  ex('dips','Dips','ดิป','triceps',['chest','shoulders'],'compound','bodyweight',
+    ['ตัวตรงเน้นไตรเซ็ปส์ (เอนหน้าเน้นอก)','ลดลงจนศอก ~90°','ดันขึ้นสุด'],
+    ['ลงลึกเกินจนไหล่เจ็บ','แกว่งขา']),
+
+  // QUADS
+  ex('back-squat','Back Squat','แบ็คสควอท','quads',['glutes','hamstrings','core'],'compound','barbell',
+    ['บาร์วางบ่า เกร็งแกนกลาง','ดันสะโพกถอยพร้อมย่อ','เข่าไปทางปลายเท้า','ลงจนต้นขาขนานพื้น'],
+    ['เข่าหุบเข้า','ส้นเท้าลอย','หลังงอช่วงล่าง']),
+  ex('front-squat','Front Squat','ฟรอนต์สควอท','quads',['glutes','core'],'compound','barbell',
+    ['บาร์วางหน้าไหล่ ศอกชู','ลำตัวตั้งตรง','ย่อลงลึก','ดันขึ้นด้วยส้นเท้า'],
+    ['ศอกตก','ลำตัวล้มหน้า']),
+  ex('leg-press','Leg Press','เลกเพรส','quads',['glutes','hamstrings'],'compound','machine',
+    ['วางเท้ากว้างประมาณไหล่','ลดลงจนเข่า ~90°','ดันด้วยส้นเท้า','ไม่ล็อกเข่ากระแทก'],
+    ['ก้นยกหลุดเบาะ','ลงตื้น']),
+  ex('lunge','Walking Lunge','ลันจ์','quads',['glutes','hamstrings'],'compound','dumbbell',
+    ['ก้าวยาวพอเหมาะ','ย่อเข่าหลังเกือบแตะพื้น','ลำตัวตั้งตรง','ดันขึ้นด้วยส้นเท้าหน้า'],
+    ['เข่าเลยปลายเท้ามาก','ตัวโคลงเสียสมดุล']),
+  ex('leg-extension','Leg Extension','เลกเอกซ์เทนชัน','quads',[],'isolation','machine',
+    ['ปรับเบาะให้เข่าตรงแกนหมุน','เหยียดขึ้นบีบต้นขาหน้า','คุมลงช้า'],
+    ['เหวี่ยงน้ำหนัก','ลงเร็วกระแทก']),
+
+  // HAMSTRINGS
+  ex('rdl','Romanian Deadlift','โรมาเนียนเดดลิฟต์','hamstrings',['glutes','back'],'compound','barbell',
+    ['เข่างอเล็กน้อยค้างไว้','ดันสะโพกถอยหลัง','บาร์เลื่อนชิดขา','รู้สึกยืดต้นขาหลัง'],
+    ['งอเข่าเยอะกลายเป็นสควอท','หลังงอ','บาร์ห่างตัว']),
+  ex('leg-curl','Leg Curl','เลกเคิร์ล','hamstrings',[],'isolation','machine',
+    ['ปรับเบาะพอดี','ม้วนส้นเข้าก้น','บีบค้าง','คุมกลับ'],
+    ['ยกสะโพก','เหวี่ยง']),
+  ex('good-morning','Good Morning','กู๊ดมอร์นิ่ง','hamstrings',['glutes','back'],'compound','barbell',
+    ['บาร์วางบ่า','เข่างอนิด','โน้มตัวด้วยสะโพก','หลังตรงตลอด'],
+    ['หลังงอ','โน้มลึกเกินกำลัง']),
+
+  // GLUTES
+  ex('hip-thrust','Hip Thrust','ฮิปทรัสต์','glutes',['hamstrings'],'compound','barbell',
+    ['พิงสะบักกับม้านั่ง','คางเก็บ','ดันสะโพกขึ้นบีบก้นสุด','คาง-เข่า-สะโพกเป็นแนว'],
+    ['แอ่นหลังล่างแทนก้น','ดันไม่สุด']),
+  ex('glute-bridge','Glute Bridge','กลูตบริดจ์','glutes',['hamstrings'],'isolation','bodyweight',
+    ['นอนหงายงอเข่า','ดันสะโพกขึ้น','บีบก้นค้าง 1 วิ','ลงช้า'],
+    ['แอ่นหลัง','ดันด้วยต้นขาหลังล้วน']),
+  ex('cable-kickback','Cable Glute Kickback','เคเบิลคิกแบ็ก','glutes',[],'isolation','machine',
+    ['เกร็งแกนกลาง','เตะขาไปหลังบีบก้น','คุมกลับช้า'],
+    ['แอ่นหลัง','เหวี่ยงขา']),
+
+  // CALVES
+  ex('standing-calf','Standing Calf Raise','ยืนเขย่งน่อง','calves',[],'isolation','machine',
+    ['เขย่งขึ้นสูงสุด','บีบน่องค้าง','ลดลงจนรู้สึกยืด','คุมจังหวะ'],
+    ['เด้งเร็ว','ช่วงสั้น']),
+  ex('seated-calf','Seated Calf Raise','นั่งเขย่งน่อง','calves',[],'isolation','machine',
+    ['วางฝ่าเท้าครึ่งหน้า','เขย่งสุด','ลดลงยืด','ช้าๆ'],
+    ['เด้ง','ช่วงตื้น']),
+
+  // CORE
+  ex('plank','Plank','แพลงก์','core',[],'isolation','bodyweight',
+    ['ศอกใต้ไหล่','ลำตัวเป็นเส้นตรง','เกร็งก้น+ท้อง','หายใจปกติ'],
+    ['สะโพกตก','ก้นโด่ง']),
+  ex('hanging-leg-raise','Hanging Leg Raise','ห้อยยกขา','core',[],'isolation','bodyweight',
+    ['ห้อยตัวนิ่ง','ยกขาขึ้นด้วยท้องล่าง','คุมลงช้า'],
+    ['แกว่งตัว','ใช้แรงเหวี่ยง']),
+  ex('cable-crunch','Cable Crunch','เคเบิลครันช์','core',[],'isolation','machine',
+    ['คุกเข่าจับเชือก','ม้วนตัวลงด้วยท้อง','บีบค้าง','คุมขึ้น'],
+    ['ดึงด้วยแขน','โยกสะโพก']),
+  ex('russian-twist','Russian Twist','รัสเซียนทวิสต์','core',[],'isolation','bodyweight',
+    ['เอนหลังเล็กน้อย','บิดลำตัวซ้ายขวา','เกร็งท้องตลอด'],
+    ['บิดด้วยแขน','หลังงอ']),
+
+  // TRAPS / FOREARM
+  ex('shrug','Barbell Shrug','ชรัก','traps',[],'isolation','barbell',
+    ['ยักไหล่ขึ้นตรงๆ','บีบบ่าค้าง','ลงช้า','ไม่หมุนไหล่'],
+    ['หมุนไหล่เป็นวง','ใช้แรงเหวี่ยง']),
+  ex('wrist-curl','Wrist Curl','ริสต์เคิร์ล','forearms',[],'isolation','dumbbell',
+    ['วางปลายแขนบนเข่า','ม้วนข้อมือขึ้น','คุมลง'],
+    ['ใช้ช่วงสั้น','เร็วเกิน']),
+
+  // ===== HOME GYM (ดัมเบล / บอดี้เวท / ยางยืด) =====
+  ex('goblet-squat','Goblet Squat','ก็อบเล็ตสควอท','quads',['glutes','core'],'compound','dumbbell',
+    ['ถือดัมเบลแนบอก','ศอกชี้ลง ลำตัวตั้งตรง','ย่อลงให้ศอกแตะต้นขาด้านใน','ดันขึ้นด้วยส้นเท้า'],
+    ['หลังงอ','ส้นเท้าลอย']),
+  ex('bulgarian-split','Bulgarian Split Squat','บัลแกเรียนสปลิทสควอท','quads',['glutes','hamstrings'],'compound','dumbbell',
+    ['วางหลังเท้าหลังบนม้านั่ง','ย่อขาหน้าจนต้นขาขนานพื้น','ลำตัวตั้งตรง','ดันขึ้นด้วยขาหน้า'],
+    ['เข่าหน้าเลยปลายเท้ามาก','เสียสมดุล']),
+  ex('db-rdl','Dumbbell RDL','ดัมเบล RDL','hamstrings',['glutes','back'],'compound','dumbbell',
+    ['ถือดัมเบลหน้าต้นขา','เข่างอเล็กน้อย','ดันสะโพกถอย ดัมเบลเลื่อนชิดขา','รู้สึกยืดต้นขาหลัง'],
+    ['หลังงอ','งอเข่าเยอะ']),
+  ex('floor-press','Dumbbell Floor Press','ฟลอร์เพรส','chest',['triceps','shoulders'],'compound','dumbbell',
+    ['นอนหงายงอเข่า','ดัมเบลระดับอก','ลดจนศอกแตะพื้นเบาๆ','ดันขึ้นบีบอก'],
+    ['กระแทกศอกพื้น','ดันเอียง']),
+  ex('single-arm-row','Single-arm Dumbbell Row','โรว์แขนเดียว','back',['biceps'],'compound','dumbbell',
+    ['เข่า+มือยันม้านั่ง หลังตรงขนานพื้น','ดึงดัมเบลเข้าสะโพก','บีบสะบัก','คุมลงช้า'],
+    ['บิดลำตัวช่วย','ดึงด้วยแขนล้วน']),
+  ex('pike-pushup','Pike Push-up','ไพค์วิดพื้น','shoulders',['triceps'],'compound','bodyweight',
+    ['ตั้งสะโพกสูงเป็นรูปตัว V','ลดศีรษะลงระหว่างมือ','ดันขึ้นด้วยไหล่'],
+    ['สะโพกตก','ลงตื้น']),
+  ex('step-up','Dumbbell Step-up','สเต็ปอัพ','quads',['glutes'],'compound','dumbbell',
+    ['ถือดัมเบลข้างลำตัว','ก้าวขึ้นกล่อง/ม้านั่ง','ดันด้วยส้นเท้าขาบน','คุมลงช้า'],
+    ['ถีบขาล่างช่วย','เข่าบิดเข้า']),
+  ex('band-row','Resistance Band Row','โรว์ยางยืด','back',['biceps'],'compound','band',
+    ['คล้องยางยืดกับจุดยึด','ดึงเข้าลำตัวบีบสะบัก','คุมกลับช้า'],
+    ['ใช้แรงเหวี่ยง','ปล่อยพรวด']),
+  ex('band-pull-apart','Band Pull-apart','ดึงยางยืดแยก','shoulders',['back'],'isolation','band',
+    ['ถือยางยืดระดับอก','ดึงแยกออกข้างบีบหลังบน','คุมกลับ'],
+    ['ยักไหล่','งอศอก']),
+];
+
+const exById = (id) => EXERCISES.find(e => e.id === id);
+
+// --- เทมเพลตท่าต่อกลุ่ม สำหรับสร้างโปรแกรม ---
+// ในแต่ละ preset ใส่ตัวเลือก home-gym (ดัมเบล/บอดี้เวท/ยางยืด) ต่อท้าย
+// buildProgram จะกรองตามอุปกรณ์แล้วเลือก compound ก่อน จำกัดจำนวนท่า/วัน
+const PRESETS = {
+  push: ['bench-press','incline-db-press','ohp','db-shoulder-press','floor-press','pike-pushup','dips','lateral-raise','tricep-pushdown','overhead-ext'],
+  pull: ['deadlift','pullup','barbell-row','single-arm-row','band-row','lat-pulldown','face-pull','band-pull-apart','barbell-curl','db-curl','hammer-curl'],
+  legs: ['back-squat','goblet-squat','rdl','db-rdl','bulgarian-split','leg-press','step-up','leg-curl','standing-calf','hanging-leg-raise'],
+  upper: ['bench-press','floor-press','barbell-row','single-arm-row','ohp','db-shoulder-press','lat-pulldown','barbell-curl','db-curl','tricep-pushdown'],
+  lower: ['back-squat','goblet-squat','rdl','db-rdl','bulgarian-split','leg-press','hip-thrust','leg-curl','standing-calf'],
+  fullA: ['back-squat','goblet-squat','bench-press','floor-press','barbell-row','single-arm-row','lateral-raise','plank'],
+  fullB: ['deadlift','db-rdl','ohp','db-shoulder-press','lat-pulldown','band-row','leg-press','bulgarian-split','barbell-curl'],
+  fullC: ['front-squat','goblet-squat','incline-db-press','floor-press','seated-row','single-arm-row','hip-thrust','tricep-pushdown'],
+};
+
+// (ดูตัวแปร PRESETS / REP_SCHEME ด้านล่าง)
+// rep ranges ตามเป้าหมาย
+const REP_SCHEME = {
+  strength:    { reps: '3–6',  sets: 4, restCompound: 180, restIso: 120, note: 'เน้นน้ำหนักหนัก พัก long' },
+  hypertrophy: { reps: '6–12', sets: 4, restCompound: 120, restIso: 75,  note: 'เน้นปริมาณและ time under tension' },
+  fatloss:     { reps: '10–15',sets: 3, restCompound: 90,  restIso: 60,  note: 'พักสั้น คุมหัวใจเต้น' },
+  fitness:     { reps: '8–12', sets: 3, restCompound: 120, restIso: 75,  note: 'สมดุล แข็งแรง+ฟิต' },
+};
+
+const GOAL_LABELS = { strength:'เพิ่มแรง', hypertrophy:'เพิ่มกล้าม', fatloss:'ลดไขมัน', fitness:'ฟิตทั่วไป' };
+const LEVEL_LABELS = { beginner:'มือใหม่', intermediate:'กลาง', advanced:'สูง' };
+const EQUIP_LABELS = { dumbbell:'โฮมยิม — บาร์เบล + ดัมเบล', dumbbell_only:'ที่บ้าน — ดัมเบล / ยางยืด', bodyweight:'บอดี้เวท ล้วน', gym:'ฟิตเนสครบ (มีเครื่อง)' };
+const EQUIP_EMOJI = { dumbbell:'🏠', dumbbell_only:'🏋️', bodyweight:'🤸', gym:'🏢' };
+
+const DAYS_TH = ['อา','จ','อ','พ','พฤ','ศ','ส'];
+const DAYS_FULL = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'];
+
+/* ============================================================
+   2) PROGRAM GENERATION LOGIC
+   ============================================================ */
+
+function filterByEquip(ids, equip) {
+  if (equip === 'gym') return ids;
+  return ids.filter(id => {
+    const e = exById(id); if (!e) return false;
+    if (equip === 'bodyweight') return ['bodyweight','band'].includes(e.equip);
+    if (equip === 'dumbbell_only') return ['dumbbell','bodyweight','band'].includes(e.equip);
+    if (equip === 'dumbbell') return ['dumbbell','bodyweight','band','barbell'].includes(e.equip);
+    return true;
+  });
+}
+
+// เลือก split ตามจำนวนวัน
+function pickSplit(days) {
+  if (days <= 3) return { name: days === 2 ? 'Full Body A/B' : 'Full Body A/B/C', dayTypes: days === 2 ? ['fullA','fullB'] : ['fullA','fullB','fullC'] };
+  if (days === 4) return { name: 'Upper / Lower', dayTypes: ['upper','lower','upper','lower'] };
+  if (days === 5) return { name: 'Upper / Lower / Push / Pull / Legs', dayTypes: ['upper','lower','push','pull','legs'] };
+  return { name: 'Push / Pull / Legs ×2', dayTypes: ['push','pull','legs','push','pull','legs'] };
+}
+
+const DAY_NAME = { push:'Push (ดัน)', pull:'Pull (ดึง)', legs:'Legs (ขา)', upper:'Upper (บน)', lower:'Lower (ล่าง)', fullA:'Full Body A', fullB:'Full Body B', fullC:'Full Body C' };
+
+function buildProgram(profile) {
+  const { goal, level, days, equip } = profile;
+  const split = pickSplit(days);
+  const scheme = REP_SCHEME[goal] || REP_SCHEME.fitness;
+  // มือใหม่ลดเซ็ตลงนิด สูงเพิ่มขึ้น
+  const setMod = level === 'beginner' ? -1 : level === 'advanced' ? 1 : 0;
+
+  const target = level === 'advanced' ? 6 : level === 'beginner' ? 4 : 5; // จำนวนท่า/วัน
+  const rank = id => exById(id).type === 'compound' ? 0 : 1;
+
+  const workouts = split.dayTypes.map((type, i) => {
+    let ids = filterByEquip(PRESETS[type], equip);
+    if (ids.length === 0) ids = filterByEquip(PRESETS.fullA, equip); // fallback
+    if (ids.length === 0) ids = PRESETS.fullA.filter(id => exById(id).equip === 'bodyweight');
+    // เลือก compound ก่อน แล้วจำกัดจำนวนท่า (Array.sort เสถียร = คงลำดับ curated)
+    ids = [...ids].sort((a,b)=>rank(a)-rank(b)).slice(0, target);
+    const exercises = ids.map(id => {
+      const e = exById(id);
+      const sets = Math.max(2, scheme.sets + setMod);
+      return {
+        exerciseId: id,
+        sets,
+        reps: scheme.reps,
+        rest: e.type === 'compound' ? scheme.restCompound : scheme.restIso,
+      };
+    });
+    return { id: `w${i}`, name: DAY_NAME[type] || type, type, exercises };
+  });
+
+  return {
+    id: 'prog-' + Date.now(),
+    name: split.name,
+    goal, level, days, equip,
+    splitName: split.name,
+    note: scheme.note,
+    workouts,
+    createdAt: Date.now(),
+  };
+}
+
+// แนะนำตารางลงสัปดาห์ (กระจายวันพัก) — index วัน 0=อา..6=ส, ค่า = index ของ workout หรือ null
+function buildSchedule(days) {
+  // ลำดับวันที่นิยม: จ อ พ พฤ ศ ส อา
+  const order = [1,2,3,4,5,6,0];
+  const picks = {
+    2: [1,4], 3: [1,3,5], 4: [1,2,4,5], 5: [1,2,3,5,6], 6: [1,2,3,4,5,6],
+  }[days] || [1,3,5];
+  const sched = Array(7).fill(null);
+  picks.forEach((d, i) => { sched[d] = i; });
+  return sched;
+}
+
+/* ============================================================
+   3) HELPERS — 1RM, plate, date, storage
+   ============================================================ */
+
+const epley   = (w, r) => r <= 1 ? w : Math.round(w * (1 + r / 30));
+const brzycki = (w, r) => r <= 1 ? w : Math.round(w * 36 / (37 - r));
+const e1rm = (w, r) => Math.round((epley(w,r) + brzycki(w,r)) / 2);
+
+// คำนวณแผ่นต่อข้าง — ใช้คู่แผ่นมาตรฐาน (kg หรือ lb)
+function calcPlates(target, bar, unit) {
+  const per = (target - bar) / 2;
+  if (per <= 0) return { ok: per === 0, perSide: [], per: 0 };
+  const sizes = unit === 'lb' ? [45, 35, 25, 10, 5, 2.5] : [25, 20, 15, 10, 5, 2.5, 1.25];
+  let rem = per; const plates = [];
+  for (const s of sizes) {
+    while (rem >= s - 1e-9) { plates.push(s); rem = +(rem - s).toFixed(3); }
+  }
+  return { ok: Math.abs(rem) < 1e-6, perSide: plates, per, leftover: rem };
+}
+
+// ===== หน่วย kg/lb (เก็บข้อมูลเป็น kg เสมอ แปลงตอนแสดง/บันทึก) =====
+const LB = 2.2046226218;
+const uLabel = (unit) => unit === 'lb' ? 'lb' : 'kg';
+const dispW = (kg, unit) => (kg === '' || kg == null) ? '' : (unit === 'lb' ? Math.round(kg * LB * 10) / 10 : kg);
+const toKg  = (v, unit) => { const n = +v || 0; return unit === 'lb' ? +(n / LB).toFixed(2) : n; };
+
+function sugText(sug, unit) {
+  if (!sug) return '';
+  const w = dispW(sug.weight, unit), u = uLabel(unit);
+  if (sug.type === 'up')  return `เพิ่มเป็น ${w}${u} × ${sug.reps}`;
+  if (sug.type === 'rep') return `${w}${u} ดันให้ถึง ${sug.reps} reps`;
+  return `คุมฟอร์ม ${w}${u} × ${sug.reps} ให้ครบ`;
+}
+
+// แนะนำ warm-up set จากน้ำหนักจริง (kg) — คืนค่าเป็น kg
+function warmupSets(workingKg, e) {
+  if (!workingKg || workingKg <= 0) return [];
+  const isBar = e && e.equip === 'barbell';
+  const out = [];
+  if (isBar && workingKg > 25) out.push({ label: 'บาร์', w: 20, reps: 10 });
+  const pcts = workingKg >= 60 ? [[0.4,5],[0.6,3],[0.8,2]] : [[0.5,5],[0.7,3]];
+  pcts.forEach(([p, reps]) => {
+    const w = Math.round(workingKg * p / 2.5) * 2.5;
+    if (w > 0 && (!isBar || w > 20)) out.push({ label: Math.round(p*100)+'%', w, reps });
+  });
+  return out;
+}
+
+// ประวัติท่านั้น (best set ต่อ session) ล่าสุด n ครั้ง — เรียงเก่า→ใหม่
+function historyFor(sessions, exId, n = 8) {
+  const out = [];
+  for (const s of sessions) {
+    const e = s.entries.find(e => e.exerciseId === exId);
+    if (e && e.sets.length) {
+      const best = e.sets.reduce((a,b)=> b.weight>a.weight?b:a, e.sets[0]);
+      out.push({ date: s.date, weight: best.weight, reps: best.reps, e1rm: e1rm(best.weight, best.reps) });
+      if (out.length >= n) break;
+    }
+  }
+  return out.reverse();
+}
+
+const fmtDate = (ts) => {
+  const d = new Date(ts);
+  return `${d.getDate()} ${['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'][d.getMonth()]} ${(d.getFullYear()+543)%100}`;
+};
+const dayKey = (ts) => { const d = new Date(ts); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; };
+const fmtClock = (s) => `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+
+const STORE_KEY = 'fitlog_v1';
+function loadState() {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || null; } catch { return null; }
+}
+function saveState(s) {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) { console.warn('save fail', e); }
+}
+
+// ส่งออกข้อมูลเป็นไฟล์ JSON (ใช้ทั้งหน้า Settings และ banner เตือนสำรอง)
+function exportData(state) {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type:'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `fitlog-backup-${new Date().toISOString().slice(0,10)}.json`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+/* ============================================================
+   4) GLOBAL STATE (reducer + context)
+   ============================================================ */
+
+const initialState = {
+  profile: null,          // { name, sex, age, height, weight, goal, level, days, equip }
+  program: null,          // โปรแกรมปัจจุบัน
+  schedule: null,         // array length 7
+  sessions: [],           // ประวัติเทรน [{id, date, workoutId, name, entries:[{exerciseId, sets:[{weight,reps,rpe,done}]}], note, duration}]
+  bodyLog: [],            // [{date, weight}] บันทึกน้ำหนักตัว
+  measurements: [],       // [{date, chest, waist, arm, hip, thigh}] สัดส่วนร่างกาย
+  deloadAck: null,        // timestamp ล่าสุดที่ปัด deload reminder
+  settings: { dark: true, unit: 'kg', sound: true },
+};
+
+// รวม state ที่โหลดมากับ default (กัน field ใหม่หาย เวลาอัปเดตเวอร์ชัน)
+function mergeState(loaded) {
+  if (!loaded) return initialState;
+  return {
+    ...initialState,
+    ...loaded,
+    settings: { ...initialState.settings, ...(loaded.settings || {}) },
+    bodyLog: loaded.bodyLog || [],
+    measurements: loaded.measurements || [],
+    sessions: loaded.sessions || [],
+  };
+}
+
+function reducer(state, action) {
+  switch (action.type) {
+    case 'INIT': return action.payload;
+    case 'SET_PROFILE': return { ...state, profile: action.payload };
+    case 'SET_PROGRAM': return { ...state, program: action.payload, schedule: action.schedule ?? state.schedule };
+    case 'UPDATE_PROGRAM': return { ...state, program: action.payload, schedule: action.schedule ?? state.schedule };
+    case 'SET_SCHEDULE': return { ...state, schedule: action.payload };
+    case 'ADD_SESSION': return { ...state, sessions: [action.payload, ...state.sessions] };
+    case 'UPDATE_SESSION': return { ...state, sessions: state.sessions.map(s => s.id === action.payload.id ? action.payload : s) };
+    case 'DELETE_SESSION': return { ...state, sessions: state.sessions.filter(s => s.id !== action.id) };
+    case 'ADD_MEASUREMENT': {
+      const k = dayKey(action.payload.date);
+      const rest = state.measurements.filter(m => dayKey(m.date) !== k);
+      return { ...state, measurements: [...rest, action.payload].sort((a,b)=>a.date-b.date) };
+    }
+    case 'DELETE_MEASUREMENT': return { ...state, measurements: state.measurements.filter(m => m.date !== action.date) };
+    case 'ADD_BODYWEIGHT': {
+      const k = dayKey(action.payload.date);
+      const rest = state.bodyLog.filter(b => dayKey(b.date) !== k); // 1 ค่า/วัน
+      return { ...state, bodyLog: [...rest, action.payload].sort((a,b)=>a.date-b.date) };
+    }
+    case 'DELETE_BODYWEIGHT': return { ...state, bodyLog: state.bodyLog.filter(b => b.date !== action.date) };
+    case 'SET_DELOAD_ACK': return { ...state, deloadAck: action.payload };
+    case 'SET_SETTINGS': return { ...state, settings: { ...state.settings, ...action.payload } };
+    case 'REPLACE_ALL': return mergeState(action.payload);
+    case 'RESET': return initialState;
+    default: return state;
+  }
+}
+
+const AppCtx = createContext(null);
+const useApp = () => useContext(AppCtx);
+
+/* ============================================================
+   5) UI PRIMITIVES
+   ============================================================ */
+
+const Icon = ({ d, className = 'w-6 h-6', stroke = 2 }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round">{d}</svg>
+);
+const I = {
+  home: <><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></>,
+  cal: <><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></>,
+  book: <><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></>,
+  chart: <><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></>,
+  cog: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.14.31.22.65.22 1z"/></>,
+  plus: <path d="M12 5v14M5 12h14"/>,
+  check: <path d="M20 6L9 17l-5-5"/>,
+  x: <path d="M18 6L6 18M6 6l12 12"/>,
+  play: <path d="M5 3l14 9-14 9V3z"/>,
+  pause: <><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></>,
+  fire: <path d="M12 2s4 4 4 8a4 4 0 0 1-8 0c0-2 1-3 1-3s-1 4 1 4 2-2 2-4c0-3-1-5-1-5z"/>,
+  trophy: <><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0z"/><path d="M5 4H3v2a3 3 0 0 0 3 3M19 4h2v2a3 3 0 0 1-3 3"/></>,
+  trash: <><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></>,
+  clock: <><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></>,
+  edit: <><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></>,
+  back: <path d="M19 12H5M12 19l-7-7 7-7"/>,
+  dl: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></>,
+  up: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/></>,
+  copy: <><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></>,
+  chevUp: <path d="M18 15l-6-6-6 6"/>,
+  chevDown: <path d="M6 9l6 6 6-6"/>,
+  swap: <><path d="M16 3l4 4-4 4"/><path d="M20 7H4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h16"/></>,
+  scale: <><path d="M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a9 9 0 0 0-9-9z"/><path d="M12 7l2 4h-4z"/></>,
+  bolt: <path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/>,
+};
+
+const Card = ({ children, className = '', ...p }) => (
+  <div className={`bg-white dark:bg-neutral-900/80 rounded-2xl border border-neutral-200/70 dark:border-white/5 shadow-sm shadow-neutral-300/30 dark:shadow-black/40 ${className}`} {...p}>{children}</div>
+);
+
+const Btn = ({ children, variant = 'primary', className = '', ...p }) => {
+  const styles = {
+    primary: 'bg-gradient-to-b from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-600/25 active:from-blue-600 active:to-blue-700',
+    ghost: 'bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 active:bg-neutral-200 dark:active:bg-neutral-700',
+    danger: 'bg-red-500/10 text-red-600 dark:text-red-400 active:bg-red-500/20',
+    outline: 'border border-neutral-300 dark:border-neutral-700 active:bg-neutral-100 dark:active:bg-neutral-800',
+  }[variant];
+  return <button className={`min-h-[44px] px-4 rounded-xl font-semibold text-[15px] transition active:scale-[.98] ${styles} ${className}`} {...p}>{children}</button>;
+};
+
+const IconBtn = ({ icon, danger, className='', ...p }) => (
+  <button className={`w-9 h-9 grid place-items-center rounded-full transition active:scale-90 ${danger?'text-red-500 bg-red-500/10':'text-neutral-500 bg-neutral-100 dark:bg-neutral-800'} ${className}`} {...p}>
+    <Icon d={icon} className="w-4 h-4"/>
+  </button>
+);
+
+const Pill = ({ active, children, ...p }) => (
+  <button className={`px-3 min-h-[40px] rounded-full text-sm font-medium transition active:scale-95 ${active ? 'bg-blue-600 text-white' : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300'}`} {...p}>{children}</button>
+);
+
+const Sparkline = ({ data, color = '#3b82f6', h = 34, w = 130 }) => {
+  if (!data || data.length < 2) return null;
+  const min = Math.min(...data), max = Math.max(...data), span = (max - min) || 1;
+  const x = i => (i / (data.length - 1)) * w;
+  const y = v => h - ((v - min) / span) * (h - 6) - 3;
+  const pts = data.map((v,i)=>`${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="overflow-visible">
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      <circle cx={x(data.length-1)} cy={y(data[data.length-1])} r="3" fill={color}/>
+    </svg>
+  );
+};
+
+const Sheet = ({ open, onClose, title, children }) => {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+      <div className="relative w-full bg-white dark:bg-neutral-900 rounded-t-3xl max-h-[88vh] overflow-y-auto no-scrollbar pop safe-bottom" onClick={e=>e.stopPropagation()}>
+        <div className="sticky top-0 bg-white dark:bg-neutral-900 px-5 pt-3 pb-2 z-10">
+          <div className="w-10 h-1.5 bg-neutral-300 dark:bg-neutral-700 rounded-full mx-auto mb-3" />
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-bold">{title}</h3>
+            <button onClick={onClose} className="w-9 h-9 grid place-items-center rounded-full bg-neutral-100 dark:bg-neutral-800"><Icon d={I.x} className="w-5 h-5"/></button>
+          </div>
+        </div>
+        <div className="px-5 pb-6">{children}</div>
+      </div>
+    </div>
+  );
+};
+
+const MuscleBadge = ({ m, secondary }) => (
+  <span className={`text-[11px] px-2 py-0.5 rounded-full ${secondary ? 'bg-neutral-100 dark:bg-neutral-800 text-neutral-500' : 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300'}`}>{MUSCLES[m] || m}</span>
+);
+
+/* ============================================================
+   6) ONBOARDING
+   ============================================================ */
+
+function Onboarding({ onDone }) {
+  const [step, setStep] = useState(0);
+  const [f, setF] = useState({ name:'', sex:'male', age:25, height:170, weight:70, goal:'hypertrophy', level:'beginner', days:3, equip:'dumbbell' });
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const steps = [
+    // 0 welcome
+    <div key="w" className="text-center">
+      <div className="text-7xl mb-4">🏋️</div>
+      <h1 className="text-3xl font-extrabold mb-2">FitLog</h1>
+      <p className="text-neutral-500 mb-8">ผู้ช่วยเทรนนิ่งส่วนตัว วางแผน บันทึก และดูความก้าวหน้า</p>
+    </div>,
+    // 1 ข้อมูลตัว
+    <div key="p" className="space-y-4">
+      <h2 className="text-2xl font-bold">ข้อมูลตัวเรา</h2>
+      <Field label="ชื่อเล่น">
+        <input value={f.name} onChange={e=>set('name', e.target.value)} placeholder="เช่น โต้ง" className="input" />
+      </Field>
+      <Field label="เพศ">
+        <div className="flex gap-2">
+          {[['male','ชาย'],['female','หญิง'],['other','อื่นๆ']].map(([v,l])=>(
+            <Pill key={v} active={f.sex===v} onClick={()=>set('sex',v)}>{l}</Pill>
+          ))}
+        </div>
+      </Field>
+      <div className="grid grid-cols-3 gap-3">
+        <Field label="อายุ"><input type="number" inputMode="numeric" value={f.age} onChange={e=>set('age',+e.target.value)} className="input"/></Field>
+        <Field label="ส่วนสูง (ซม.)"><input type="number" inputMode="numeric" value={f.height} onChange={e=>set('height',+e.target.value)} className="input"/></Field>
+        <Field label="น้ำหนัก (กก.)"><input type="number" inputMode="decimal" value={f.weight} onChange={e=>set('weight',+e.target.value)} className="input"/></Field>
+      </div>
+    </div>,
+    // 2 เป้าหมาย
+    <div key="g" className="space-y-4">
+      <h2 className="text-2xl font-bold">เป้าหมาย</h2>
+      <div className="grid grid-cols-2 gap-3">
+        {Object.entries(GOAL_LABELS).map(([v,l])=>(
+          <button key={v} onClick={()=>set('goal',v)} className={`p-4 rounded-2xl text-left border-2 transition ${f.goal===v?'border-blue-600 bg-blue-50 dark:bg-blue-500/10':'border-neutral-200 dark:border-neutral-800'}`}>
+            <div className="text-2xl mb-1">{{strength:'💪',hypertrophy:'🦾',fatloss:'🔥',fitness:'⚡'}[v]}</div>
+            <div className="font-semibold">{l}</div>
+            <div className="text-xs text-neutral-500">{REP_SCHEME[v].reps} reps</div>
+          </button>
+        ))}
+      </div>
+      <Field label="ระดับประสบการณ์">
+        <div className="flex gap-2">{Object.entries(LEVEL_LABELS).map(([v,l])=><Pill key={v} active={f.level===v} onClick={()=>set('level',v)}>{l}</Pill>)}</div>
+      </Field>
+    </div>,
+    // 3 วัน + อุปกรณ์
+    <div key="d" className="space-y-5">
+      <h2 className="text-2xl font-bold">ความถี่ & อุปกรณ์</h2>
+      <Field label={`เทรนกี่วันต่อสัปดาห์: ${f.days} วัน`}>
+        <input type="range" min="2" max="6" value={f.days} onChange={e=>set('days',+e.target.value)} className="w-full accent-blue-600 h-8"/>
+        <div className="flex justify-between text-xs text-neutral-400 px-1">{[2,3,4,5,6].map(n=><span key={n}>{n}</span>)}</div>
+        <div className="text-sm text-blue-600 dark:text-blue-400 font-medium mt-1">แนะนำ: {pickSplit(f.days).name}</div>
+      </Field>
+      <Field label="อุปกรณ์ที่มี">
+        <div className="space-y-2">
+          {Object.entries(EQUIP_LABELS).map(([v,l])=>(
+            <button key={v} onClick={()=>set('equip',v)} className={`w-full p-3.5 rounded-2xl text-left border-2 flex items-center gap-3 transition ${f.equip===v?'border-blue-500 bg-blue-50 dark:bg-blue-500/10':'border-neutral-200 dark:border-neutral-800'}`}>
+              <span className="text-2xl">{EQUIP_EMOJI[v]}</span>
+              <span className="font-medium flex-1">{l}</span>
+              {f.equip===v && <Icon d={I.check} className="w-5 h-5 text-blue-500"/>}
+            </button>
+          ))}
+        </div>
+      </Field>
+    </div>,
+  ];
+
+  const next = () => step < steps.length-1 ? setStep(step+1) : onDone(f);
+
+  return (
+    <div className="min-h-screen flex flex-col safe-top">
+      <div className="px-6 pt-4">
+        <div className="flex gap-1.5">{steps.map((_,i)=><div key={i} className={`h-1.5 flex-1 rounded-full ${i<=step?'bg-blue-600':'bg-neutral-200 dark:bg-neutral-800'}`}/>)}</div>
+      </div>
+      <div className="flex-1 px-6 py-8 flex flex-col justify-center fade-in" key={step}>{steps[step]}</div>
+      <div className="px-6 pb-8 safe-bottom flex gap-3">
+        {step>0 && <Btn variant="ghost" onClick={()=>setStep(step-1)} className="px-6">ย้อน</Btn>}
+        <Btn onClick={next} className="flex-1">{step===steps.length-1?'สร้างโปรแกรมให้เลย 🚀':'ต่อไป'}</Btn>
+      </div>
+    </div>
+  );
+}
+
+const Field = ({ label, children }) => (
+  <label className="block">
+    <span className="text-sm font-medium text-neutral-500 dark:text-neutral-400 mb-1.5 block">{label}</span>
+    {children}
+  </label>
+);
+
+/* ============================================================
+   7) DASHBOARD
+   ============================================================ */
+
+function Dashboard({ go }) {
+  const { state, dispatch } = useApp();
+  const { profile, program, schedule, sessions } = state;
+  const deload = useMemo(()=>deloadInfo(sessions, state.deloadAck), [sessions, state.deloadAck]);
+  const todayDow = new Date().getDay();
+  const todayWorkoutIdx = schedule ? schedule[todayDow] : null;
+  const todayWorkout = (program && todayWorkoutIdx != null) ? program.workouts[todayWorkoutIdx] : null;
+
+  // streak: นับสัปดาห์ที่เทรนต่อเนื่อง (อย่างง่าย: จำนวนวันที่เทรน 7 วันล่าสุด & ทั้งหมด)
+  const stats = useMemo(() => {
+    const last7 = sessions.filter(s => Date.now() - s.date < 7*864e5).length;
+    const totalVol = sessions.reduce((a,s)=>a + sessionVolume(s), 0);
+    // streak วันต่อเนื่อง
+    const daysSet = new Set(sessions.map(s => dayKey(s.date)));
+    let streak = 0; let d = new Date();
+    // ถ้าวันนี้ยังไม่เทรนให้เริ่มนับจากเมื่อวาน
+    if (!daysSet.has(dayKey(d.getTime()))) d.setDate(d.getDate()-1);
+    while (daysSet.has(dayKey(d.getTime()))) { streak++; d.setDate(d.getDate()-1); }
+    return { last7, totalVol, streak, total: sessions.length };
+  }, [sessions]);
+
+  return (
+    <Screen>
+      <div className="pt-2">
+        <p className="text-neutral-500">{DAYS_FULL[todayDow]} · {fmtDate(Date.now())}</p>
+        <h1 className="text-3xl font-extrabold">สวัสดี{profile?.name?` ${profile.name}`:''} 👋</h1>
+      </div>
+
+      {/* การ์ดวันนี้ */}
+      <Card className="p-5 mt-4 bg-gradient-to-br from-blue-500 via-blue-600 to-indigo-600 border-0 text-white shadow-xl shadow-blue-600/25">
+        <p className="text-blue-100 text-sm font-medium">โปรแกรมวันนี้</p>
+        {todayWorkout ? (
+          <>
+            <h2 className="text-2xl font-bold mt-1">{todayWorkout.name}</h2>
+            <p className="text-blue-100 text-sm mt-1">{todayWorkout.exercises.length} ท่า · ~{Math.round(todayWorkout.exercises.length*8)} นาที</p>
+            <button onClick={()=>go('log', { workoutIdx: todayWorkoutIdx })} className="mt-4 bg-white text-blue-700 font-bold rounded-xl min-h-[48px] w-full flex items-center justify-center gap-2 active:scale-95 transition">
+              <Icon d={I.play} className="w-5 h-5"/> เริ่มเทรน
+            </button>
+            <button onClick={()=>go('log',{workoutIdx:'free'})} className="mt-2 text-blue-50/90 text-sm font-medium w-full">หรือ เทรนอิสระ →</button>
+          </>
+        ) : (
+          <>
+            <h2 className="text-2xl font-bold mt-1">วันพัก 🛌</h2>
+            <p className="text-blue-100 text-sm mt-1">พักฟื้นกล้ามเนื้อ หรือเทรนอิสระก็ได้</p>
+            <div className="flex gap-2 mt-4">
+              <button onClick={()=>go('log',{workoutIdx:'free'})} className="flex-1 bg-white text-blue-700 font-bold rounded-xl min-h-[44px] active:scale-95 transition flex items-center justify-center gap-1.5"><Icon d={I.play} className="w-4 h-4"/> เทรนอิสระ</button>
+              <button onClick={()=>go('schedule')} className="px-4 bg-white/20 text-white font-bold rounded-xl min-h-[44px] active:scale-95 transition">ตาราง</button>
+            </div>
+          </>
+        )}
+      </Card>
+
+      {/* Deload banner */}
+      {deload && (
+        <div className="mt-4 p-4 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-500 text-white relative overflow-hidden shadow-lg shadow-orange-500/20">
+          <button onClick={()=>dispatch({type:'SET_DELOAD_ACK', payload:Date.now()})} className="absolute top-2.5 right-2.5 w-7 h-7 grid place-items-center rounded-full bg-white/20"><Icon d={I.x} className="w-4 h-4"/></button>
+          <p className="font-bold flex items-center gap-2">🪫 ถึงเวลา Deload แล้ว</p>
+          <p className="text-sm text-amber-50 mt-1 pr-6">เทรนต่อเนื่องมา {deload.weeks} สัปดาห์ — สัปดาห์นี้ลองลด volume ลง ~40–50% (ลดเซ็ตหรือน้ำหนัก) เพื่อให้ร่างกายฟื้นแล้วกลับมาแรงขึ้น</p>
+        </div>
+      )}
+
+      {/* Backup reminder */}
+      {sessions.length>=3 && (!state.settings.lastBackup || Date.now()-state.settings.lastBackup > 14*864e5) && (
+        <div className="mt-4 p-4 rounded-2xl bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 flex items-center gap-3">
+          <span className="text-2xl">💾</span>
+          <div className="flex-1">
+            <p className="font-semibold text-sm">ควรสำรองข้อมูล</p>
+            <p className="text-xs text-neutral-500">{state.settings.lastBackup?`สำรองล่าสุด ${fmtDate(state.settings.lastBackup)}`:'ยังไม่เคยสำรอง'} — iOS อาจล้างข้อมูลได้</p>
+          </div>
+          <Btn variant="ghost" onClick={()=>{ exportData(state); dispatch({type:'SET_SETTINGS', payload:{lastBackup:Date.now()}}); }} className="px-4">Export</Btn>
+        </div>
+      )}
+
+      {/* สถิติ */}
+      <div className="grid grid-cols-3 gap-3 mt-4">
+        <StatCard icon={I.fire} color="text-orange-500" bg="bg-orange-100 dark:bg-orange-500/15" label="สตรีค (วัน)" value={stats.streak}/>
+        <StatCard icon={I.cal} color="text-blue-500" bg="bg-blue-100 dark:bg-blue-500/15" label="7 วันนี้" value={stats.last7}/>
+        <StatCard icon={I.trophy} color="text-amber-500" bg="bg-amber-100 dark:bg-amber-500/15" label="ทั้งหมด" value={stats.total}/>
+      </div>
+
+      {/* โปรแกรม */}
+      {program && (
+        <Card className="p-4 mt-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs text-neutral-500">โปรแกรมปัจจุบัน</p>
+              <p className="font-bold">{program.name}</p>
+            </div>
+            <Pill onClick={()=>go('schedule')}>จัดการ</Pill>
+          </div>
+          <div className="flex gap-1.5 mt-3">
+            {schedule && schedule.map((w,i)=>(
+              <div key={i} className={`flex-1 text-center py-2 rounded-lg text-xs ${i===todayDow?'ring-2 ring-blue-500':''} ${w!=null?'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 font-semibold':'bg-neutral-100 dark:bg-neutral-800 text-neutral-400'}`}>
+                {DAYS_TH[i]}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* ล่าสุด */}
+      {sessions.length>0 && (
+        <div className="mt-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-bold">ประวัติล่าสุด</h3>
+            <button onClick={()=>go('progress')} className="text-blue-600 text-sm font-medium">ดูทั้งหมด</button>
+          </div>
+          <div className="space-y-2">
+            {sessions.slice(0,3).map(s=>(
+              <Card key={s.id} className="p-3 flex items-center justify-between">
+                <div>
+                  <p className="font-semibold">{s.name}</p>
+                  <p className="text-xs text-neutral-500">{fmtDate(s.date)} · {s.entries.reduce((a,e)=>a+e.sets.filter(x=>x.done).length,0)} เซ็ต · {dispW(Math.round(sessionVolume(s)),state.settings.unit||'kg').toLocaleString()} {uLabel(state.settings.unit||'kg')}</p>
+                </div>
+                <span className="text-2xl">💪</span>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+    </Screen>
+  );
+}
+
+const StatCard = ({ icon, color, bg, label, value }) => (
+  <Card className="p-3 text-center">
+    <div className={`w-9 h-9 mx-auto rounded-xl grid place-items-center ${bg||'bg-neutral-100 dark:bg-neutral-800'}`}><Icon d={icon} className={`w-5 h-5 ${color}`}/></div>
+    <div className="text-2xl font-extrabold mt-1.5 tabular-nums">{value}</div>
+    <div className="text-[11px] text-neutral-500">{label}</div>
+  </Card>
+);
+
+function sessionVolume(s) {
+  return s.entries.reduce((a,e)=> a + e.sets.reduce((b,x)=> b + (x.done ? (+x.weight||0)*(+x.reps||0) : 0), 0), 0);
+}
+
+/* ============================================================
+   8) SCHEDULE
+   ============================================================ */
+
+function SchedulePage({ go }) {
+  const { state, dispatch } = useApp();
+  const { program, schedule } = state;
+  const [editDay, setEditDay] = useState(null);
+
+  if (!program) return <Screen><Empty title="ยังไม่มีโปรแกรม" sub="ไปที่ตั้งค่าเพื่อสร้างโปรแกรมใหม่"/></Screen>;
+
+  const assign = (workoutIdx) => {
+    const next = [...schedule]; next[editDay] = workoutIdx; dispatch({ type:'SET_SCHEDULE', payload: next }); setEditDay(null);
+  };
+  const duplicateWorkout = (wi) => {
+    const w = program.workouts[wi];
+    const copy = { ...w, id:'w'+Date.now(), name: w.name.replace(/ \(สำเนา\)$/,'')+' (สำเนา)', exercises: w.exercises.map(e=>({...e})) };
+    dispatch({ type:'UPDATE_PROGRAM', payload:{ ...program, workouts:[...program.workouts, copy] } });
+  };
+  const deleteWorkout = (wi) => {
+    if (program.workouts.length<=1) { alert('ต้องมีอย่างน้อย 1 วันเทรน'); return; }
+    if (!confirm('ลบวันเทรนนี้? (วันในตารางที่ใช้อยู่จะกลายเป็นวันพัก)')) return;
+    const workouts = program.workouts.filter((_,i)=>i!==wi);
+    const newSched = schedule.map(s => s==null ? null : s===wi ? null : s>wi ? s-1 : s);
+    dispatch({ type:'UPDATE_PROGRAM', payload:{ ...program, workouts }, schedule:newSched });
+  };
+
+  return (
+    <Screen>
+      <h1 className="text-3xl font-extrabold pt-2">ตารางสัปดาห์</h1>
+      <p className="text-neutral-500">{program.name} · {program.note}</p>
+
+      <div className="space-y-2 mt-4">
+        {DAYS_FULL.map((dn, i) => {
+          const wIdx = schedule[i];
+          const w = wIdx!=null ? program.workouts[wIdx] : null;
+          const isToday = i === new Date().getDay();
+          return (
+            <Card key={i} className={`p-3 flex items-center gap-3 ${isToday?'ring-2 ring-blue-500':''}`}>
+              <div className={`w-11 h-11 rounded-xl grid place-items-center font-bold ${w?'bg-blue-600 text-white':'bg-neutral-100 dark:bg-neutral-800 text-neutral-400'}`}>{DAYS_TH[i]}</div>
+              <div className="flex-1" onClick={()=>setEditDay(i)}>
+                <p className="font-semibold">{dn}{isToday && <span className="text-blue-500 text-xs ml-1">วันนี้</span>}</p>
+                <p className="text-sm text-neutral-500">{w ? `${w.name} · ${w.exercises.length} ท่า` : 'วันพัก'}</p>
+              </div>
+              {w && <button onClick={()=>go('log',{workoutIdx:wIdx})} className="w-10 h-10 grid place-items-center rounded-full bg-blue-100 dark:bg-blue-500/20 text-blue-600"><Icon d={I.play} className="w-4 h-4"/></button>}
+              <button onClick={()=>setEditDay(i)} className="w-10 h-10 grid place-items-center rounded-full bg-neutral-100 dark:bg-neutral-800"><Icon d={I.edit} className="w-4 h-4"/></button>
+            </Card>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-between mt-6 mb-2">
+        <h3 className="font-bold">วันเทรนในโปรแกรม</h3>
+        <button onClick={()=>go('editWorkout',{workoutIdx:'new'})} className="text-blue-600 text-sm font-semibold flex items-center gap-1"><Icon d={I.plus} className="w-4 h-4"/> สร้างวันใหม่</button>
+      </div>
+      <div className="space-y-2">
+        {program.workouts.map((w,wi)=>(
+          <Card key={w.id} className="p-4">
+            <div className="flex items-center justify-between">
+              <p className="font-bold">{w.name}</p>
+              <div className="flex gap-1.5">
+                <IconBtn icon={I.edit} onClick={()=>go('editWorkout',{workoutIdx:wi})}/>
+                <IconBtn icon={I.copy} onClick={()=>duplicateWorkout(wi)}/>
+                <IconBtn icon={I.trash} danger onClick={()=>deleteWorkout(wi)}/>
+              </div>
+            </div>
+            <div className="mt-2 space-y-1">
+              {w.exercises.map((we,j)=>{const e=exById(we.exerciseId); return (
+                <div key={j} className="flex justify-between text-sm">
+                  <span className="text-neutral-700 dark:text-neutral-300">{e?.th||we.exerciseId}</span>
+                  <span className="text-neutral-500 tabular-nums">{we.sets}×{we.reps}</span>
+                </div>
+              );})}
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <Sheet open={editDay!=null} onClose={()=>setEditDay(null)} title={editDay!=null?`${DAYS_FULL[editDay]} ทำอะไรดี?`:''}>
+        <div className="space-y-2">
+          <button onClick={()=>assign(null)} className="w-full p-3 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-left font-medium">🛌 วันพัก</button>
+          {program.workouts.map((w,wi)=>(
+            <button key={w.id} onClick={()=>assign(wi)} className="w-full p-3 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-left">
+              <p className="font-semibold">{w.name}</p>
+              <p className="text-xs text-neutral-500">{w.exercises.length} ท่า</p>
+            </button>
+          ))}
+        </div>
+      </Sheet>
+    </Screen>
+  );
+}
+
+/* ============================================================
+   8.5) EXERCISE PICKER + WORKOUT EDITOR (Plan Editor)
+   ============================================================ */
+
+function ExercisePicker({ open, onClose, onPick, title, equip }) {
+  const [q, setQ] = useState('');
+  const [m, setM] = useState('all');
+  const list = EXERCISES.filter(e => {
+    if (equip && equip !== 'gym') { const allowed = filterByEquip([e.id], equip); if (!allowed.length) return false; }
+    if (q && !(e.th.includes(q) || e.en.toLowerCase().includes(q.toLowerCase()))) return false;
+    if (m !== 'all' && e.primary !== m) return false;
+    return true;
+  });
+  return (
+    <Sheet open={open} onClose={onClose} title={title || 'เลือกท่า'}>
+      <input value={q} onChange={e=>setQ(e.target.value)} placeholder="🔍 ค้นหาท่า" className="input"/>
+      <div className="flex gap-2 overflow-x-auto no-scrollbar mt-3 pb-1">
+        <Pill active={m==='all'} onClick={()=>setM('all')}>ทั้งหมด</Pill>
+        {Object.entries(MUSCLES).map(([k,v])=><Pill key={k} active={m===k} onClick={()=>setM(k)}>{v}</Pill>)}
+      </div>
+      <div className="space-y-2 mt-3">
+        {list.map(e=>(
+          <button key={e.id} onClick={()=>onPick(e.id)} className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 active:scale-[.98] transition text-left">
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-500 grid place-items-center text-lg shrink-0">{e.type==='compound'?'🏋️':'💪'}</div>
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-sm truncate">{e.th}</p>
+              <p className="text-xs text-neutral-500 truncate">{MUSCLES[e.primary]} · {EQUIP_TH[e.equip]}</p>
+            </div>
+            <Icon d={I.plus} className="w-5 h-5 text-blue-500"/>
+          </button>
+        ))}
+        {list.length===0 && <p className="text-center text-neutral-400 text-sm py-6">ไม่พบท่าที่ตรงกับอุปกรณ์นี้</p>}
+      </div>
+    </Sheet>
+  );
+}
+
+const REP_PRESETS = ['3–6','6–12','8–12','10–15','12–20'];
+
+function WorkoutEditor({ workoutIdx, go }) {
+  const { state, dispatch } = useApp();
+  const { program } = state;
+  const isNew = workoutIdx === 'new';
+  const existing = !isNew ? program.workouts[workoutIdx] : null;
+  const [name, setName] = useState(existing ? existing.name : 'วันเทรนใหม่');
+  const [exs, setExs] = useState(existing ? existing.exercises.map(e=>({...e})) : []);
+  const [picker, setPicker] = useState(null); // {mode:'add'} | {mode:'swap', idx}
+
+  const updateEx = (i, k, v) => setExs(a=>a.map((e,j)=> j!==i ? e : { ...e, [k]: v }));
+  const move = (i, dir) => setExs(a=>{ const b=[...a]; const j=i+dir; if(j<0||j>=b.length) return b; [b[i],b[j]]=[b[j],b[i]]; return b; });
+  const remove = (i) => setExs(a=>a.filter((_,j)=>j!==i));
+  const onPick = (id) => {
+    if (picker?.mode==='swap') setExs(a=>a.map((e,j)=> j!==picker.idx ? e : { ...e, exerciseId:id }));
+    else { const e = exById(id); setExs(a=>[...a, { exerciseId:id, sets:4, reps:'8–12', rest: e?.type==='compound'?120:75 }]); }
+    setPicker(null);
+  };
+  const save = () => {
+    if (exs.length===0) { alert('เพิ่มอย่างน้อย 1 ท่าก่อนบันทึก'); return; }
+    const workout = { id: existing?existing.id:('w'+Date.now()), name: name.trim()||'วันเทรน', type: existing?existing.type:'custom', exercises: exs };
+    const workouts = isNew ? [...program.workouts, workout] : program.workouts.map((w,i)=> i===workoutIdx ? workout : w);
+    dispatch({ type:'UPDATE_PROGRAM', payload:{ ...program, workouts } });
+    go('schedule');
+  };
+
+  return (
+    <div className="min-h-screen pb-safe">
+      <div className="sticky top-0 z-30 glass safe-top px-4 py-3 border-b border-neutral-200/60 dark:border-white/5">
+        <div className="flex items-center gap-3">
+          <IconBtn icon={I.back} onClick={()=>go('schedule')}/>
+          <p className="font-bold flex-1">{isNew?'สร้างวันเทรนใหม่':'แก้ไขวันเทรน'}</p>
+          <Btn onClick={save} className="px-5">บันทึก</Btn>
+        </div>
+      </div>
+
+      <div className="px-4 py-4 space-y-3 max-w-lg mx-auto">
+        <Field label="ชื่อวันเทรน">
+          <input value={name} onChange={e=>setName(e.target.value)} className="input" placeholder="เช่น Push, ขา, อกหลัง"/>
+        </Field>
+
+        {exs.map((we, i) => {
+          const e = exById(we.exerciseId);
+          return (
+            <Card key={i} className="p-4">
+              <div className="flex items-start gap-2">
+                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-500 grid place-items-center text-lg shrink-0">{e?.type==='compound'?'🏋️':'💪'}</div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold truncate">{e?.th||we.exerciseId}</p>
+                  <p className="text-xs text-neutral-500">{e?MUSCLES[e.primary]:''}</p>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <button onClick={()=>move(i,-1)} disabled={i===0} className="w-7 h-6 grid place-items-center rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-30"><Icon d={I.chevUp} className="w-4 h-4"/></button>
+                  <button onClick={()=>move(i,1)} disabled={i===exs.length-1} className="w-7 h-6 grid place-items-center rounded bg-neutral-100 dark:bg-neutral-800 disabled:opacity-30"><Icon d={I.chevDown} className="w-4 h-4"/></button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 mt-3">
+                <label className="text-center">
+                  <span className="text-[11px] text-neutral-400 block mb-1">เซ็ต</span>
+                  <input type="number" inputMode="numeric" value={we.sets} onChange={ev=>updateEx(i,'sets',+ev.target.value||1)} className="setinput"/>
+                </label>
+                <label className="text-center">
+                  <span className="text-[11px] text-neutral-400 block mb-1">reps</span>
+                  <input value={we.reps} onChange={ev=>updateEx(i,'reps',ev.target.value)} className="setinput"/>
+                </label>
+                <label className="text-center">
+                  <span className="text-[11px] text-neutral-400 block mb-1">พัก (วิ)</span>
+                  <input type="number" inputMode="numeric" value={we.rest} onChange={ev=>updateEx(i,'rest',+ev.target.value||0)} className="setinput"/>
+                </label>
+              </div>
+              <div className="flex gap-1.5 mt-2 flex-wrap">
+                {REP_PRESETS.map(r=><button key={r} onClick={()=>updateEx(i,'reps',r)} className={`text-xs px-2.5 py-1 rounded-full ${we.reps===r?'bg-blue-600 text-white':'bg-neutral-100 dark:bg-neutral-800 text-neutral-500'}`}>{r}</button>)}
+              </div>
+              <div className="flex gap-2 mt-3">
+                <button onClick={()=>setPicker({mode:'swap',idx:i})} className="flex-1 text-sm font-medium text-blue-600 bg-blue-50 dark:bg-blue-500/10 rounded-lg min-h-[40px] flex items-center justify-center gap-1.5"><Icon d={I.swap} className="w-4 h-4"/> สลับท่า</button>
+                <button onClick={()=>remove(i)} className="px-4 text-sm font-medium text-red-500 bg-red-50 dark:bg-red-500/10 rounded-lg min-h-[40px]">ลบ</button>
+              </div>
+            </Card>
+          );
+        })}
+
+        <button onClick={()=>setPicker({mode:'add'})} className="w-full border-2 border-dashed border-neutral-300 dark:border-neutral-700 rounded-2xl min-h-[56px] flex items-center justify-center gap-2 text-blue-600 font-semibold active:scale-[.99] transition">
+          <Icon d={I.plus} className="w-5 h-5"/> เพิ่มท่า
+        </button>
+        {exs.length===0 && <p className="text-center text-neutral-400 text-sm">ยังไม่มีท่า — กดเพิ่มท่าด้านบน</p>}
+      </div>
+
+      <ExercisePicker open={!!picker} onClose={()=>setPicker(null)} onPick={onPick} equip={program.equip}
+        title={picker?.mode==='swap'?'สลับเป็นท่า...':'เพิ่มท่า'}/>
+    </div>
+  );
+}
+
+/* ============================================================
+   9) EXERCISE LIBRARY
+   ============================================================ */
+
+function Library() {
+  const [q, setQ] = useState('');
+  const [muscle, setMuscle] = useState('all');
+  const [type, setType] = useState('all');
+  const [sel, setSel] = useState(null);
+
+  const list = EXERCISES.filter(e => {
+    if (q && !(e.th.includes(q) || e.en.toLowerCase().includes(q.toLowerCase()))) return false;
+    if (muscle!=='all' && e.primary!==muscle) return false;
+    if (type!=='all' && e.type!==type) return false;
+    return true;
+  });
+
+  return (
+    <Screen>
+      <h1 className="text-3xl font-extrabold pt-2">คลังท่า</h1>
+      <input value={q} onChange={e=>setQ(e.target.value)} placeholder="🔍 ค้นหาท่า (ไทย/อังกฤษ)" className="input mt-3"/>
+      <div className="flex gap-2 overflow-x-auto no-scrollbar mt-3 pb-1">
+        <Pill active={muscle==='all'} onClick={()=>setMuscle('all')}>ทั้งหมด</Pill>
+        {Object.entries(MUSCLES).map(([k,v])=><Pill key={k} active={muscle===k} onClick={()=>setMuscle(k)}>{v}</Pill>)}
+      </div>
+      <div className="flex gap-2 mt-2">
+        {[['all','ทุกประเภท'],['compound','Compound'],['isolation','Isolation']].map(([v,l])=><Pill key={v} active={type===v} onClick={()=>setType(v)}>{l}</Pill>)}
+      </div>
+
+      <p className="text-sm text-neutral-500 mt-3">{list.length} ท่า</p>
+      <div className="space-y-2 mt-2">
+        {list.map(e=>(
+          <Card key={e.id} className="p-3 active:scale-[.99] transition" onClick={()=>setSel(e)}>
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-500 grid place-items-center text-xl shrink-0">{e.type==='compound'?'🏋️':'💪'}</div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold truncate">{e.th}</p>
+                <p className="text-xs text-neutral-500 truncate">{e.en}</p>
+                <div className="flex gap-1 mt-1 flex-wrap">
+                  <MuscleBadge m={e.primary}/>
+                  {e.secondary.slice(0,2).map(s=><MuscleBadge key={s} m={s} secondary/>)}
+                </div>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <ExerciseDetail e={sel} onClose={()=>setSel(null)}/>
+    </Screen>
+  );
+}
+
+function ExerciseDetail({ e, onClose }) {
+  if (!e) return null;
+  const ytQuery = encodeURIComponent(e.en + ' proper form');
+  return (
+    <Sheet open={!!e} onClose={onClose} title={e.th}>
+      <p className="text-neutral-500 -mt-1">{e.en}</p>
+      <div className="flex gap-1.5 mt-2 flex-wrap">
+        <MuscleBadge m={e.primary}/>
+        {e.secondary.map(s=><MuscleBadge key={s} m={s} secondary/>)}
+        <span className="text-[11px] px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-500">{e.type==='compound'?'Compound':'Isolation'}</span>
+        <span className="text-[11px] px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-500">{EQUIP_TH[e.equip]}</span>
+      </div>
+
+      <div className="aspect-video rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 mt-4 grid place-items-center text-6xl">
+        {e.type==='compound'?'🏋️':'💪'}
+      </div>
+      <a href={`https://www.youtube.com/results?search_query=${ytQuery}`} target="_blank" rel="noopener" className="mt-2 flex items-center justify-center gap-2 text-sm font-medium text-red-600 bg-red-50 dark:bg-red-500/10 rounded-xl min-h-[44px]">
+        ▶️ ดูวิดีโอสาธิตบน YouTube
+      </a>
+
+      <h4 className="font-bold mt-5 mb-2 flex items-center gap-2">✅ Form cues</h4>
+      <ul className="space-y-1.5">
+        {e.cues.map((c,i)=>(
+          <li key={i} className="flex gap-2 text-sm"><span className="text-blue-500 font-bold">{i+1}.</span><span className="text-neutral-700 dark:text-neutral-300">{c}</span></li>
+        ))}
+      </ul>
+
+      <h4 className="font-bold mt-5 mb-2 flex items-center gap-2">⚠️ ข้อควรระวัง</h4>
+      <ul className="space-y-1.5">
+        {e.mistakes.map((c,i)=>(
+          <li key={i} className="flex gap-2 text-sm"><span className="text-red-500">✗</span><span className="text-neutral-700 dark:text-neutral-300">{c}</span></li>
+        ))}
+      </ul>
+    </Sheet>
+  );
+}
+
+/* ============================================================
+   10) WORKOUT LOGGING + REST TIMER
+   ============================================================ */
+
+function beep(times = 1) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    let t = ctx.currentTime;
+    for (let i=0;i<times;i++){
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = 880; o.type = 'sine';
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.4, t+0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t+0.25);
+      o.start(t); o.stop(t+0.26); t += 0.32;
+    }
+  } catch {}
+}
+
+function RestTimer({ seconds, onClose, sound }) {
+  const [left, setLeft] = useState(seconds);
+  const [running, setRunning] = useState(true);
+  useEffect(() => {
+    if (!running) return;
+    if (left <= 0) { if (sound) beep(2); onClose(); return; }
+    const t = setTimeout(()=>setLeft(l=>l-1), 1000);
+    return ()=>clearTimeout(t);
+  }, [left, running]);
+  const pct = (left / seconds) * 100;
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-40 px-4 pb-safe">
+      <div className="bg-neutral-900 dark:bg-neutral-800 text-white rounded-2xl p-4 shadow-2xl mb-24 fade-in">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-neutral-400">พักระหว่างเซ็ต</span>
+          <button onClick={onClose} className="text-neutral-400"><Icon d={I.x} className="w-5 h-5"/></button>
+        </div>
+        <div className="flex items-center gap-4 mt-1">
+          <span className="text-4xl font-extrabold tabular-nums">{fmtClock(left)}</span>
+          <div className="flex-1 flex gap-2">
+            <button onClick={()=>setLeft(l=>l+15)} className="flex-1 bg-white/10 rounded-lg py-2 text-sm font-medium">+15</button>
+            <button onClick={()=>setRunning(r=>!r)} className="w-11 grid place-items-center bg-white/10 rounded-lg"><Icon d={running?I.pause:I.play} className="w-5 h-5"/></button>
+            <button onClick={onClose} className="flex-1 bg-blue-600 rounded-lg py-2 text-sm font-medium">ข้าม</button>
+          </div>
+        </div>
+        <div className="h-1.5 bg-white/10 rounded-full mt-3 overflow-hidden">
+          <div className="h-full bg-blue-500 transition-all" style={{width:`${pct}%`}}/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WorkoutLog({ workoutIdx, go }) {
+  const { state, dispatch } = useApp();
+  const { program, sessions, settings } = state;
+  const unit = settings.unit || 'kg';
+  const isFree = workoutIdx === 'free';
+  const workout = isFree ? { id:'free', name:'เทรนอิสระ', exercises:[] }
+                         : (program && workoutIdx!=null ? program.workouts[workoutIdx] : null);
+
+  const startRef = useRef(Date.now());
+  const [rest, setRest] = useState(null);
+  const [note, setNote] = useState('');
+  const [newPRs, setNewPRs] = useState(null);
+  const [picker, setPicker] = useState(null);   // {mode:'add'} | {mode:'swap', ei}
+  const [open, setOpen] = useState({});          // panel ขยาย warm-up/ประวัติ
+  const wakeRef = useRef(null);
+
+  const mkEntry = (exId, nSets) => {
+    const prev = lastEntryFor(sessions, exId);
+    const e = exById(exId);
+    const reps = e?.type==='compound' ? '6–12' : '8–12';
+    const sug = suggestNext(prev, reps);
+    const pf = dispW(sug?.weight ?? prev?.weight, unit) || '';
+    return {
+      exerciseId: exId, rest: e?.type==='compound'?120:75, targetReps: reps,
+      sets: Array.from({length: nSets||3}, () => ({ weight: pf, reps:'', rpe:'', done:false })),
+      prev, sug,
+    };
+  };
+
+  const [entries, setEntries] = useState(() => {
+    if (!workout) return [];
+    return workout.exercises.map(we => {
+      const prev = lastEntryFor(sessions, we.exerciseId);
+      const sug = suggestNext(prev, we.reps);
+      const pf = dispW(sug?.weight ?? prev?.weight, unit) || '';
+      return {
+        exerciseId: we.exerciseId, rest: we.rest, targetReps: we.reps,
+        sets: Array.from({length: we.sets}, () => ({ weight: pf, reps:'', rpe:'', done:false })),
+        prev, sug,
+      };
+    });
+  });
+
+  useEffect(() => {
+    let lock;
+    (async()=>{ try { if ('wakeLock' in navigator) { lock = await navigator.wakeLock.request('screen'); wakeRef.current = lock; } } catch {} })();
+    return () => { try { lock && lock.release(); } catch {} };
+  }, []);
+
+  if (!workout) return <Screen><Empty title="ไม่พบโปรแกรม" sub="กลับไปหน้าหลัก"/><Btn onClick={()=>go('dashboard')} className="w-full mt-4">กลับหน้าหลัก</Btn></Screen>;
+
+  const update = (ei, si, k, v) => setEntries(es => es.map((e,i)=> i!==ei ? e : { ...e, sets: e.sets.map((s,j)=> j!==si ? s : { ...s, [k]: v }) }));
+  const toggleDone = (ei, si) => {
+    setEntries(es => es.map((e,i)=> i!==ei ? e : { ...e, sets: e.sets.map((s,j)=> j!==si ? s : { ...s, done: !s.done }) }));
+    const e = entries[ei];
+    if (!e.sets[si].done) { if (settings.sound) beep(1); setRest({ sec: e.rest, key: Date.now() }); }
+  };
+  const addSet = (ei) => setEntries(es => es.map((e,i)=> i!==ei ? e : { ...e, sets:[...e.sets, { weight:e.sets[e.sets.length-1]?.weight||'', reps:'', rpe:'', done:false }] }));
+  const delSet = (ei, si) => setEntries(es => es.map((e,i)=> i!==ei ? e : { ...e, sets: e.sets.filter((_,j)=>j!==si) }));
+  const removeEntry = (ei) => { if (!confirm('ลบท่านี้ออกจากการเทรน?')) return; setEntries(es => es.filter((_,i)=>i!==ei)); };
+  const onPick = (id) => {
+    if (picker?.mode==='swap') { const ei=picker.ei; setEntries(es=>es.map((e,i)=> i!==ei ? e : { ...mkEntry(id, e.sets.length) })); }
+    else setEntries(es=>[...es, mkEntry(id)]);
+    setPicker(null);
+  };
+  const tog = (k) => setOpen(o=>({ ...o, [k]: !o[k] }));
+
+  const doneCount = entries.reduce((a,e)=>a+e.sets.filter(s=>s.done).length,0);
+  const totalCount = entries.reduce((a,e)=>a+e.sets.length,0);
+
+  const finish = () => {
+    const session = {
+      id: 'sess-'+Date.now(), date: Date.now(), workoutId: workout.id, name: workout.name,
+      duration: Math.round((Date.now()-startRef.current)/1000), note,
+      entries: entries.map(e=>({ exerciseId:e.exerciseId, sets: e.sets.filter(s=>s.done).map(s=>({ weight: toKg(s.weight, unit), reps:+s.reps||0, rpe:+s.rpe||null, done:true })) })).filter(e=>e.sets.length>0),
+    };
+    if (session.entries.length === 0) { if(!confirm('ยังไม่ได้ติ๊กเซ็ตที่ทำเลย จะออกโดยไม่บันทึกไหม?')) return; go('dashboard'); return; }
+    const prs = computeNewPRs(session, sessions);
+    dispatch({ type:'ADD_SESSION', payload: session });
+    if (prs.length) setNewPRs(prs); else go('progress');
+  };
+
+  return (
+    <div className="min-h-screen pb-safe">
+      <div className="sticky top-0 z-30 glass safe-top px-4 py-3 border-b border-neutral-200/60 dark:border-white/5">
+        <div className="flex items-center gap-3">
+          <button onClick={()=>{ if(confirm('ออกจากการเทรน? (ข้อมูลที่ยังไม่บันทึกจะหาย)')) go('dashboard'); }} className="w-9 h-9 grid place-items-center rounded-full bg-neutral-100 dark:bg-neutral-800"><Icon d={I.back} className="w-5 h-5"/></button>
+          <div className="flex-1">
+            <p className="font-bold leading-tight">{workout.name}</p>
+            <p className="text-xs text-neutral-500">{doneCount}/{totalCount} เซ็ต · <LiveDuration start={startRef.current}/></p>
+          </div>
+          <Btn onClick={finish} className="px-4">เสร็จ</Btn>
+        </div>
+        <div className="h-1 bg-neutral-200 dark:bg-neutral-800 rounded-full mt-2 overflow-hidden">
+          <div className="h-full bg-green-500 transition-all" style={{width: totalCount?`${doneCount/totalCount*100}%`:'0%'}}/>
+        </div>
+      </div>
+
+      <div className="px-4 py-4 space-y-3 pb-40">
+        {entries.map((e, ei) => {
+          const ex = exById(e.exerciseId);
+          const firstKg = toKg(e.sets[0]?.weight, unit) || e.sug?.weight || e.prev?.weight || 0;
+          const warm = warmupSets(firstKg, ex);
+          const hist = historyFor(sessions, e.exerciseId);
+          return (
+            <Card key={ei} className="p-4">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-bold truncate">{ex?.th||e.exerciseId}</p>
+                  <p className="text-xs text-neutral-500">เป้า {e.targetReps} reps · พัก {e.rest}s · {ex?MUSCLES[ex.primary]:''}</p>
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <IconBtn icon={I.swap} onClick={()=>setPicker({mode:'swap', ei})}/>
+                  <IconBtn icon={I.trash} danger onClick={()=>removeEntry(ei)}/>
+                </div>
+              </div>
+
+              {e.sug && (
+                <div className="mt-2 text-xs bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-500/10 dark:to-indigo-500/10 rounded-xl px-3 py-2 flex items-start gap-2">
+                  <Icon d={I.bolt} className="w-4 h-4 text-blue-500 shrink-0 mt-0.5"/>
+                  <span className="text-neutral-600 dark:text-neutral-300">
+                    {e.prev && <span className="text-neutral-400">ครั้งก่อน {dispW(e.prev.weight,unit)}{uLabel(unit)}×{e.prev.reps}{e.prev.rpe?` @RPE${e.prev.rpe}`:''} → </span>}
+                    <b className="text-blue-600 dark:text-blue-400">{sugText(e.sug, unit)}</b>
+                  </span>
+                </div>
+              )}
+
+              <div className="flex gap-2 mt-2">
+                <button onClick={()=>tog(`w${ei}`)} className={`text-xs px-3 py-1.5 rounded-full font-medium ${open[`w${ei}`]?'bg-orange-500 text-white':'bg-orange-100 dark:bg-orange-500/15 text-orange-600 dark:text-orange-400'}`}>🔥 วอร์มอัพ</button>
+                {hist.length>0 && <button onClick={()=>tog(`h${ei}`)} className={`text-xs px-3 py-1.5 rounded-full font-medium ${open[`h${ei}`]?'bg-blue-600 text-white':'bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-400'}`}>📊 ประวัติ ({hist.length})</button>}
+              </div>
+
+              {open[`w${ei}`] && (
+                <div className="mt-2 bg-orange-50 dark:bg-orange-500/10 rounded-xl p-3 text-sm">
+                  {warm.length ? (
+                    <div className="space-y-1">
+                      {warm.map((s,k)=>(<div key={k} className="flex justify-between"><span className="text-neutral-500">{s.label}</span><span className="font-semibold tabular-nums">{dispW(s.w,unit)}{uLabel(unit)} × {s.reps}</span></div>))}
+                      <p className="text-[11px] text-neutral-400 pt-1">เซ็ตวอร์มไม่ถูกบันทึก ใช้เตรียมร่างกายก่อนเซ็ตจริง</p>
+                    </div>
+                  ) : <p className="text-neutral-400 text-xs">กรอกน้ำหนักเซ็ตแรกก่อน เพื่อให้แนะนำวอร์มอัพ</p>}
+                </div>
+              )}
+              {open[`h${ei}`] && hist.length>0 && (
+                <div className="mt-2 bg-blue-50 dark:bg-blue-500/10 rounded-xl p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs text-neutral-500">est. 1RM</div>
+                    <Sparkline data={hist.map(h=>h.e1rm)} color="#3b82f6"/>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {hist.slice(-5).map((h,k)=>(<span key={k} className="text-[11px] px-2 py-0.5 rounded bg-white/70 dark:bg-white/5 tabular-nums">{dispW(h.weight,unit)}×{h.reps}</span>))}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-[28px_1fr_1fr_1fr_44px] gap-2 items-center mt-3 text-[11px] text-neutral-400 font-medium px-1">
+                <span>#</span><span>{uLabel(unit)}</span><span>reps</span><span>RPE</span><span></span>
+              </div>
+              <div className="space-y-2 mt-1">
+                {e.sets.map((s, si) => (
+                  <div key={si} className={`grid grid-cols-[28px_1fr_1fr_1fr_44px] gap-2 items-center ${s.done?'opacity-60':''}`}>
+                    <span className="text-center text-sm font-bold text-neutral-400">{si+1}</span>
+                    <input type="number" inputMode="decimal" value={s.weight} onChange={ev=>update(ei,si,'weight',ev.target.value)} placeholder={uLabel(unit)} className="setinput"/>
+                    <input type="number" inputMode="numeric" value={s.reps} onChange={ev=>update(ei,si,'reps',ev.target.value)} placeholder="–" className="setinput"/>
+                    <input type="number" inputMode="decimal" value={s.rpe} onChange={ev=>update(ei,si,'rpe',ev.target.value)} placeholder="–" className="setinput"/>
+                    <button onClick={()=>toggleDone(ei,si)} className={`h-11 rounded-lg grid place-items-center transition active:scale-90 ${s.done?'bg-green-500 text-white':'bg-neutral-100 dark:bg-neutral-800 text-neutral-400'}`}>
+                      <Icon d={I.check} className="w-5 h-5"/>
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2 mt-2">
+                <button onClick={()=>addSet(ei)} className="flex-1 text-sm font-medium text-blue-600 bg-blue-50 dark:bg-blue-500/10 rounded-lg min-h-[40px]">+ เพิ่มเซ็ต</button>
+                {e.sets.length>1 && <button onClick={()=>delSet(ei,e.sets.length-1)} className="px-4 text-sm font-medium text-red-500 bg-red-50 dark:bg-red-500/10 rounded-lg min-h-[40px]">ลบเซ็ต</button>}
+              </div>
+            </Card>
+          );
+        })}
+
+        <button onClick={()=>setPicker({mode:'add'})} className="w-full border-2 border-dashed border-neutral-300 dark:border-neutral-700 rounded-2xl min-h-[52px] flex items-center justify-center gap-2 text-blue-600 font-semibold active:scale-[.99] transition">
+          <Icon d={I.plus} className="w-5 h-5"/> เพิ่มท่า
+        </button>
+        {entries.length===0 && <p className="text-center text-neutral-400 text-sm">{isFree?'เทรนอิสระ — กดเพิ่มท่าที่อยากเล่นได้เลย':'ยังไม่มีท่า'}</p>}
+
+        <Field label="โน้ตของวันนี้ (รู้สึกยังไง, อาการบาดเจ็บ)">
+          <textarea value={note} onChange={e=>setNote(e.target.value)} rows="2" placeholder="เช่น พลังดี เพิ่มน้ำหนักเบนช์ได้" className="input resize-none"/>
+        </Field>
+      </div>
+
+      <ExercisePicker open={!!picker} onClose={()=>setPicker(null)} onPick={onPick} equip={program?.equip}
+        title={picker?.mode==='swap'?'สลับเป็นท่า...':'เพิ่มท่า'}/>
+      {rest && <RestTimer key={rest.key} seconds={rest.sec} sound={settings.sound} onClose={()=>setRest(null)}/>}
+      {newPRs && <PRCelebration prs={newPRs} onClose={()=>go('progress')}/>}
+    </div>
+  );
+}
+
+function LiveDuration({ start }) {
+  const [, force] = useReducer(x=>x+1,0);
+  useEffect(()=>{ const t=setInterval(force,1000); return ()=>clearInterval(t); },[]);
+  return <span>{fmtClock(Math.round((Date.now()-start)/1000))}</span>;
+}
+
+function lastEntryFor(sessions, exId) {
+  for (const s of sessions) {
+    const e = s.entries.find(e=>e.exerciseId===exId);
+    if (e && e.sets.length) {
+      // เซ็ตที่หนักสุด
+      const best = e.sets.reduce((a,b)=> (b.weight>a.weight?b:a), e.sets[0]);
+      return { weight: best.weight, reps: best.reps, rpe: best.rpe, date: s.date };
+    }
+  }
+  return null;
+}
+
+const topRep = (r) => { const m = String(r).match(/(\d+)\s*$/); return m ? +m[1] : 12; };
+const botRep = (r) => { const m = String(r).match(/^\s*(\d+)/); return m ? +m[1] : 8; };
+
+// แนะนำ progressive overload ครั้งถัดไป จากผลครั้งก่อน + ช่วง rep
+function suggestNext(prev, targetReps) {
+  if (!prev || !prev.weight) return null;
+  const top = topRep(targetReps), bot = botRep(targetReps);
+  const inc = prev.weight >= 40 ? 2.5 : prev.weight >= 20 ? 2 : 1;
+  if (prev.reps >= top && (!prev.rpe || prev.rpe <= 9)) {
+    const nw = +(prev.weight + inc).toFixed(2);
+    return { weight: nw, reps: bot, type:'up', msg:`เพิ่มเป็น ${nw}kg × ${bot}` };
+  }
+  if (prev.reps < top) {
+    const nr = Math.min(prev.reps + 1, top);
+    return { weight: prev.weight, reps: nr, type:'rep', msg:`${prev.weight}kg ดันให้ถึง ${nr} reps` };
+  }
+  return { weight: prev.weight, reps: prev.reps, type:'hold', msg:`คุมฟอร์ม ${prev.weight}kg × ${prev.reps} ให้ครบ` };
+}
+
+// ตรวจ PR ใหม่: เทียบ best e1rm ของ session กับประวัติทั้งหมด
+function computeNewPRs(session, pastSessions) {
+  const hist = {};
+  pastSessions.forEach(s=>s.entries.forEach(e=>e.sets.forEach(st=>{
+    const v = e1rm(st.weight, st.reps); if (!hist[e.exerciseId] || v>hist[e.exerciseId]) hist[e.exerciseId]=v;
+  })));
+  const prs = [];
+  session.entries.forEach(e=>{
+    let best=0, bw=0, br=0;
+    e.sets.forEach(st=>{ const v=e1rm(st.weight,st.reps); if(v>best){ best=v; bw=st.weight; br=st.reps; } });
+    if (best>0 && best > (hist[e.exerciseId]||0)) prs.push({ exerciseId:e.exerciseId, e1rm:best, weight:bw, reps:br });
+  });
+  return prs;
+}
+
+// แนะนำ deload: เทรนต่อเนื่อง >=N สัปดาห์ (แต่ละสัปดาห์ >=2 ครั้ง) และยังไม่ได้ปัดเตือน
+function deloadInfo(sessions, ackTs) {
+  if (sessions.length < 8) return null;
+  const weekOf = (ts)=>{ const d=new Date(ts); const oj=new Date(d.getFullYear(),0,1); return d.getFullYear()*100 + Math.ceil((((d-oj)/864e5)+oj.getDay()+1)/7); };
+  const counts = {};
+  sessions.forEach(s=>{ const k=weekOf(s.date); counts[k]=(counts[k]||0)+1; });
+  // นับสัปดาห์ต่อเนื่องล่าสุดที่ >=2 ครั้ง (ไล่จากสัปดาห์ปัจจุบันถอยหลัง)
+  const nowWk = weekOf(Date.now());
+  let streak=0;
+  for (let w=nowWk; ; w--) {
+    // จัดการข้ามปี: ถ้าไม่มี key ของสัปดาห์นี้ ให้หยุด
+    if ((counts[w]||0) >= 2) streak++;
+    else if (w===nowWk) continue; // สัปดาห์นี้ยังไม่ครบ ข้ามได้
+    else break;
+    if (streak>20) break;
+  }
+  if (streak < 5) return null;
+  if (ackTs && Date.now()-ackTs < 7*864e5) return null; // ปัดแล้วภายใน 7 วัน
+  return { weeks: streak };
+}
+
+function PRCelebration({ prs, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center p-6 bg-black/60 backdrop-blur-md" onClick={onClose}>
+      <div className="bg-white dark:bg-neutral-900 rounded-3xl p-6 w-full max-w-sm text-center pop" onClick={e=>e.stopPropagation()}>
+        <div className="text-6xl mb-1">🎉</div>
+        <h2 className="text-2xl font-extrabold">สถิติใหม่!</h2>
+        <p className="text-neutral-500 text-sm">ทำลายสถิติเดิมไป {prs.length} ท่า</p>
+        <div className="space-y-2 mt-4 max-h-60 overflow-y-auto no-scrollbar">
+          {prs.map(pr=>(
+            <div key={pr.exerciseId} className="flex items-center justify-between bg-amber-50 dark:bg-amber-500/10 rounded-xl px-3 py-2.5">
+              <span className="font-semibold text-sm text-left">{exById(pr.exerciseId)?.th||pr.exerciseId}</span>
+              <span className="font-extrabold text-amber-600 tabular-nums">{pr.e1rm}<span className="text-[10px] font-medium ml-0.5">kg 1RM</span></span>
+            </div>
+          ))}
+        </div>
+        <Btn onClick={onClose} className="w-full mt-5">เยี่ยมมาก! 💪</Btn>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   11) PROGRESS
+   ============================================================ */
+
+function BodyWeightCard() {
+  const { state, dispatch } = useApp();
+  const { bodyLog } = state;
+  const unit = state.settings.unit || 'kg';
+  const [w, setW] = useState('');
+  const ref = useRef(null); const inst = useRef(null);
+
+  const add = () => {
+    const val = +w; if (!val || val<=0) return;
+    dispatch({ type:'ADD_BODYWEIGHT', payload:{ date: Date.now(), weight: toKg(val, unit) } });
+    setW('');
+  };
+
+  useEffect(()=>{
+    if (!ref.current || bodyLog.length===0) return;
+    if (inst.current) inst.current.destroy();
+    const data = bodyLog.slice(-30);
+    const dark = document.documentElement.classList.contains('dark');
+    inst.current = new Chart(ref.current, {
+      type:'line',
+      data:{ labels:data.map(b=>fmtDate(b.date)), datasets:[{ data:data.map(b=>dispW(b.weight,unit)), borderColor:'#10b981', backgroundColor:'rgba(16,185,129,.15)', fill:true, tension:.35, pointRadius:3, pointBackgroundColor:'#10b981' }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ x:{ ticks:{color:dark?'#888':'#666', maxRotation:0, autoSkip:true, maxTicksLimit:5}, grid:{display:false} }, y:{ ticks:{color:dark?'#888':'#666'}, grid:{color:dark?'#262626':'#eee'} } } }
+    });
+    return ()=>{ if(inst.current) inst.current.destroy(); };
+  }, [bodyLog, unit]);
+
+  const latest = bodyLog.length ? bodyLog[bodyLog.length-1] : null;
+  const delta = bodyLog.length>=2 ? +(dispW(latest.weight,unit) - dispW(bodyLog[0].weight,unit)).toFixed(1) : 0;
+
+  return (
+    <Card className="p-4 mt-4">
+      <div className="flex items-center justify-between mb-2">
+        <p className="font-bold flex items-center gap-2"><Icon d={I.scale} className="w-5 h-5 text-emerald-500"/> น้ำหนักตัว</p>
+        {latest && <div className="text-right">
+          <span className="text-xl font-extrabold tabular-nums">{dispW(latest.weight,unit)}</span><span className="text-sm text-neutral-400"> {uLabel(unit)}</span>
+          {bodyLog.length>=2 && <span className={`text-xs ml-2 font-semibold ${delta<0?'text-emerald-500':delta>0?'text-orange-500':'text-neutral-400'}`}>{delta>0?'+':''}{delta} {uLabel(unit)}</span>}
+        </div>}
+      </div>
+      <div className="flex gap-2">
+        <input type="number" inputMode="decimal" value={w} onChange={e=>setW(e.target.value)} placeholder={`บันทึกน้ำหนักวันนี้ (${uLabel(unit)})`} className="input flex-1"/>
+        <Btn onClick={add} className="px-5">บันทึก</Btn>
+      </div>
+      {bodyLog.length>0 ? (
+        <div className="h-40 mt-3"><canvas ref={ref}/></div>
+      ) : (
+        <p className="text-center text-neutral-400 text-sm py-6">ยังไม่มีข้อมูล — ชั่งแล้วกรอกไว้เพื่อดูแนวโน้ม</p>
+      )}
+    </Card>
+  );
+}
+
+// volume (จำนวนเซ็ต) ต่อกลุ่มกล้ามใน N วันล่าสุด (secondary นับครึ่ง)
+function muscleVolume(sessions, days = 7) {
+  const since = Date.now() - days*864e5;
+  const vol = {};
+  sessions.filter(s=>s.date>=since).forEach(s=>s.entries.forEach(e=>{
+    const ex = exById(e.exerciseId); if (!ex) return;
+    const n = e.sets.length;
+    vol[ex.primary] = (vol[ex.primary]||0) + n;
+    (ex.secondary||[]).forEach(m=>{ vol[m] = (vol[m]||0) + n*0.5; });
+  }));
+  return vol;
+}
+
+const MAJOR_MUSCLES = ['chest','back','shoulders','biceps','triceps','quads','hamstrings','glutes','calves','core'];
+
+function MuscleBalanceCard() {
+  const { state } = useApp();
+  const vol = useMemo(()=>muscleVolume(state.sessions, 7), [state.sessions]);
+  const rows = MAJOR_MUSCLES.map(m=>[m, Math.round((vol[m]||0)*10)/10]);
+  const maxv = Math.max(12, ...rows.map(([,v])=>v));
+  const neglect = rows.filter(([m,v])=>['chest','back','shoulders','quads','hamstrings'].includes(m) && v < 4).map(([m])=>MUSCLES[m]);
+  const color = v => v>=10 ? 'bg-emerald-500' : v>=4 ? 'bg-amber-500' : v>0 ? 'bg-red-400' : 'bg-neutral-300 dark:bg-neutral-700';
+  return (
+    <Card className="p-4 mt-4">
+      <p className="font-bold mb-1">สมดุลกล้ามเนื้อ (7 วัน)</p>
+      <p className="text-xs text-neutral-400 mb-3">เซ็ตต่อกลุ่ม · เป้าหมายโดยทั่วไป 10–20 เซ็ต/สัปดาห์</p>
+      <div className="space-y-1.5">
+        {rows.map(([m,v])=>(
+          <div key={m} className="flex items-center gap-2">
+            <span className="text-xs w-14 shrink-0 text-neutral-500">{MUSCLES[m]}</span>
+            <div className="flex-1 h-3.5 bg-neutral-100 dark:bg-neutral-800 rounded-full overflow-hidden">
+              <div className={`h-full rounded-full ${color(v)} transition-all`} style={{width:`${Math.min(100, v/maxv*100)}%`}}/>
+            </div>
+            <span className="text-xs w-7 text-right tabular-nums text-neutral-500">{v}</span>
+          </div>
+        ))}
+      </div>
+      {neglect.length>0 && <p className="text-xs text-amber-600 dark:text-amber-400 mt-3 bg-amber-50 dark:bg-amber-500/10 rounded-lg px-3 py-2">⚠️ สัปดาห์นี้ยังเล่นน้อย: <b>{neglect.join(', ')}</b> — ลองเพิ่มอีกหน่อย</p>}
+    </Card>
+  );
+}
+
+function CalendarHeatmap({ sessions }) {
+  const byDay = {};
+  sessions.forEach(s=>{ const k = dayKey(s.date); byDay[k] = (byDay[k]||0) + s.entries.reduce((a,e)=>a+e.sets.length,0); });
+  const today = new Date(); today.setHours(0,0,0,0);
+  const start = new Date(today); start.setDate(start.getDate() - today.getDay() - 7*15); // 16 สัปดาห์ เริ่มวันอาทิตย์
+  const cells = [];
+  for (let d = new Date(start); d <= today; d.setDate(d.getDate()+1)) {
+    const k = dayKey(d.getTime());
+    cells.push({ k, c: byDay[k]||0 });
+  }
+  const cls = c => c===0 ? 'bg-neutral-200/70 dark:bg-neutral-800'
+    : c<=5 ? 'bg-emerald-300 dark:bg-emerald-500/40'
+    : c<=12 ? 'bg-emerald-500 dark:bg-emerald-500/70'
+    : 'bg-emerald-600 dark:bg-emerald-400';
+  return (
+    <Card className="p-4 mt-4">
+      <p className="font-bold mb-3">ความสม่ำเสมอ (16 สัปดาห์)</p>
+      <div className="grid grid-rows-7 grid-flow-col gap-1 overflow-x-auto no-scrollbar pb-1" style={{gridAutoColumns:'14px'}}>
+        {cells.map((c,i)=>(<div key={i} className={`w-3.5 h-3.5 rounded-[4px] ${cls(c.c)}`} title={`${c.k}: ${c.c} เซ็ต`}/>))}
+      </div>
+      <div className="flex items-center justify-end gap-1.5 mt-2 text-[10px] text-neutral-400">
+        <span>น้อย</span>
+        <span className="w-3 h-3 rounded-[3px] bg-neutral-200/70 dark:bg-neutral-800"/>
+        <span className="w-3 h-3 rounded-[3px] bg-emerald-300 dark:bg-emerald-500/40"/>
+        <span className="w-3 h-3 rounded-[3px] bg-emerald-500 dark:bg-emerald-500/70"/>
+        <span className="w-3 h-3 rounded-[3px] bg-emerald-600 dark:bg-emerald-400"/>
+        <span>มาก</span>
+      </div>
+    </Card>
+  );
+}
+
+const MEASURE_FIELDS = [['chest','อก'],['waist','เอว'],['arm','แขน'],['hip','สะโพก'],['thigh','ต้นขา']];
+
+function MeasurementsCard() {
+  const { state, dispatch } = useApp();
+  const { measurements } = state;
+  const [open, setOpen] = useState(false);
+  const [f, setF] = useState({});
+  const latest = measurements[measurements.length-1];
+  const first = measurements[0];
+  const save = () => {
+    const entry = { date: Date.now() }; let any=false;
+    MEASURE_FIELDS.forEach(([k])=>{ if (f[k]) { entry[k]=+f[k]; any=true; } });
+    if (!any) return;
+    dispatch({ type:'ADD_MEASUREMENT', payload: entry }); setF({}); setOpen(false);
+  };
+  return (
+    <Card className="p-4 mt-4">
+      <div className="flex items-center justify-between">
+        <p className="font-bold">📐 สัดส่วนร่างกาย (ซม.)</p>
+        <button onClick={()=>setOpen(o=>!o)} className="text-blue-600 text-sm font-semibold">{open?'ปิด':'+ บันทึก'}</button>
+      </div>
+      {open && (
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {MEASURE_FIELDS.map(([k,l])=>(
+            <label key={k} className="text-center">
+              <span className="text-[11px] text-neutral-400 block mb-1">{l}</span>
+              <input type="number" inputMode="decimal" value={f[k]||''} onChange={e=>setF(p=>({...p,[k]:e.target.value}))} className="setinput" placeholder="–"/>
+            </label>
+          ))}
+          <div className="col-span-3"><Btn onClick={save} className="w-full">บันทึกสัดส่วน</Btn></div>
+        </div>
+      )}
+      {latest ? (
+        <div className="mt-3 grid grid-cols-5 gap-1.5">
+          {MEASURE_FIELDS.map(([k,l])=>{
+            const v = latest[k]; const d = (first && first[k]!=null && v!=null) ? +(v-first[k]).toFixed(1) : null;
+            return (
+              <div key={k} className="text-center bg-neutral-100 dark:bg-neutral-800 rounded-lg py-2">
+                <p className="text-[10px] text-neutral-400">{l}</p>
+                <p className="font-bold text-sm tabular-nums">{v??'–'}</p>
+                {d!=null && d!==0 && <p className={`text-[9px] font-semibold ${d<0?'text-emerald-500':'text-orange-500'}`}>{d>0?'+':''}{d}</p>}
+              </div>
+            );
+          })}
+        </div>
+      ) : !open && <p className="text-neutral-400 text-xs mt-2">ยังไม่มีข้อมูล — วัดรอบต่างๆ แล้วบันทึกไว้ดูพัฒนาการ</p>}
+    </Card>
+  );
+}
+
+function computeAchievements(state) {
+  const { sessions, bodyLog, measurements } = state;
+  const totalVol = sessions.reduce((a,s)=>a+sessionVolume(s),0);
+  const daysSet = new Set(sessions.map(s=>dayKey(s.date)));
+  let streak=0, d=new Date(); if(!daysSet.has(dayKey(d.getTime()))) d.setDate(d.getDate()-1);
+  while(daysSet.has(dayKey(d.getTime()))){ streak++; d.setDate(d.getDate()-1); }
+  return [
+    { emoji:'🌱', name:'ก้าวแรก', desc:'เทรนครั้งแรก', got: sessions.length>=1 },
+    { emoji:'🔟', name:'10 ครั้ง', desc:'เทรนครบ 10 ครั้ง', got: sessions.length>=10 },
+    { emoji:'🏅', name:'50 ครั้ง', desc:'เทรนครบ 50 ครั้ง', got: sessions.length>=50 },
+    { emoji:'🏆', name:'100 ครั้ง', desc:'เทรนครบ 100 ครั้ง', got: sessions.length>=100 },
+    { emoji:'🔥', name:'สตรีค 7', desc:'เทรนต่อเนื่อง 7 วัน', got: streak>=7 },
+    { emoji:'💪', name:'100 ตัน', desc:'ยกสะสม 100,000kg', got: totalVol>=100000 },
+    { emoji:'🦾', name:'ล้าน!', desc:'ยกสะสม 1,000,000kg', got: totalVol>=1000000 },
+    { emoji:'⚖️', name:'ใส่ใจรูปร่าง', desc:'บันทึกน้ำหนัก/สัดส่วน', got: bodyLog.length>=1||measurements.length>=1 },
+  ];
+}
+
+function AchievementsCard() {
+  const { state } = useApp();
+  const list = useMemo(()=>computeAchievements(state), [state]);
+  const got = list.filter(a=>a.got).length;
+  return (
+    <Card className="p-4 mt-4">
+      <div className="flex items-center justify-between mb-3">
+        <p className="font-bold">🎖️ เหรียญรางวัล</p>
+        <span className="text-sm text-neutral-400 tabular-nums">{got}/{list.length}</span>
+      </div>
+      <div className="grid grid-cols-4 gap-2">
+        {list.map((a,i)=>(
+          <div key={i} className={`rounded-xl p-2 text-center transition ${a.got?'bg-amber-50 dark:bg-amber-500/10':'bg-neutral-100 dark:bg-neutral-800 opacity-50 grayscale'}`}>
+            <div className="text-2xl">{a.emoji}</div>
+            <p className="text-[10px] font-semibold leading-tight mt-0.5">{a.name}</p>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function SessionEditor({ session, onClose }) {
+  const { state, dispatch } = useApp();
+  const unit = state.settings.unit || 'kg';
+  const [name, setName] = useState(session?.name || '');
+  const [note, setNote] = useState(session?.note || '');
+  const [entries, setEntries] = useState(()=> (session?.entries||[]).map(e=>({ exerciseId:e.exerciseId, sets:e.sets.map(s=>({ weight:dispW(s.weight,unit), reps:s.reps, rpe:s.rpe||'' })) })));
+  if (!session) return null;
+  const upd = (ei,si,k,v)=>setEntries(a=>a.map((e,i)=>i!==ei?e:{...e,sets:e.sets.map((s,j)=>j!==si?s:{...s,[k]:v})}));
+  const delSet = (ei,si)=>setEntries(a=>a.map((e,i)=>i!==ei?e:{...e,sets:e.sets.filter((_,j)=>j!==si)}));
+  const delEntry = (ei)=>setEntries(a=>a.filter((_,i)=>i!==ei));
+  const save = ()=>{
+    const ns = { ...session, name: name.trim()||session.name, note,
+      entries: entries.map(e=>({ exerciseId:e.exerciseId, sets:e.sets.map(s=>({ weight:toKg(s.weight,unit), reps:+s.reps||0, rpe:+s.rpe||null, done:true })) })).filter(e=>e.sets.length>0) };
+    dispatch({ type:'UPDATE_SESSION', payload: ns }); onClose();
+  };
+  return (
+    <Sheet open={!!session} onClose={onClose} title="แก้ไขประวัติ">
+      <Field label="ชื่อ"><input value={name} onChange={e=>setName(e.target.value)} className="input"/></Field>
+      <div className="space-y-3 mt-3">
+        {entries.map((e,ei)=>{ const ex=exById(e.exerciseId); return (
+          <div key={ei} className="bg-neutral-100 dark:bg-neutral-800 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="font-semibold text-sm">{ex?.th||e.exerciseId}</p>
+              <button onClick={()=>delEntry(ei)} className="text-red-500"><Icon d={I.trash} className="w-4 h-4"/></button>
+            </div>
+            {e.sets.map((s,si)=>(
+              <div key={si} className="grid grid-cols-[1fr_1fr_36px] gap-2 items-center mb-1.5">
+                <input type="number" inputMode="decimal" value={s.weight} onChange={ev=>upd(ei,si,'weight',ev.target.value)} className="setinput" placeholder={uLabel(unit)}/>
+                <input type="number" inputMode="numeric" value={s.reps} onChange={ev=>upd(ei,si,'reps',ev.target.value)} className="setinput" placeholder="reps"/>
+                <button onClick={()=>delSet(ei,si)} className="h-11 grid place-items-center text-red-400"><Icon d={I.x} className="w-4 h-4"/></button>
+              </div>
+            ))}
+          </div>
+        );})}
+      </div>
+      <Field label="โน้ต"><textarea value={note} onChange={e=>setNote(e.target.value)} rows="2" className="input resize-none mt-3"/></Field>
+      <Btn onClick={save} className="w-full mt-4">บันทึกการแก้ไข</Btn>
+    </Sheet>
+  );
+}
+
+function Progress({ go }) {
+  const { state, dispatch } = useApp();
+  const { sessions } = state;
+  const unit = state.settings.unit || 'kg';
+  const [editSession, setEditSession] = useState(null);
+  const [histQ, setHistQ] = useState('');
+  const [exId, setExId] = useState('');
+  const chartRef = useRef(null); const chartInst = useRef(null);
+  const bodyRef = useRef(null); const bodyInst = useRef(null);
+
+  // ท่าที่เคยเล่น
+  const trainedExs = useMemo(() => {
+    const ids = new Set(); sessions.forEach(s=>s.entries.forEach(e=>ids.add(e.exerciseId)));
+    return [...ids];
+  }, [sessions]);
+
+  useEffect(()=>{ if (!exId && trainedExs.length) setExId(trainedExs[0]); }, [trainedExs]);
+
+  // PRs
+  const prs = useMemo(()=>{
+    const map = {};
+    sessions.forEach(s=>s.entries.forEach(e=>e.sets.forEach(st=>{
+      const est = e1rm(st.weight, st.reps);
+      if (!map[e.exerciseId] || est > map[e.exerciseId].e1rm) map[e.exerciseId] = { e1rm: est, weight: st.weight, reps: st.reps, date: s.date };
+    })));
+    return Object.entries(map).map(([id,v])=>({ id, ...v })).sort((a,b)=>b.e1rm-a.e1rm);
+  }, [sessions]);
+
+  // volume รายสัปดาห์
+  const weeklyVol = useMemo(()=>{
+    const map = {};
+    sessions.forEach(s=>{ const d=new Date(s.date); const onejan=new Date(d.getFullYear(),0,1); const wk=Math.ceil((((d-onejan)/864e5)+onejan.getDay()+1)/7); const key=`${d.getFullYear()}-W${wk}`; map[key]=(map[key]||0)+sessionVolume(s); });
+    return Object.entries(map).slice(-8);
+  }, [sessions]);
+
+  // chart e1rm ของท่าที่เลือก
+  useEffect(()=>{
+    if (!chartRef.current || !exId) return;
+    const points = [];
+    [...sessions].reverse().forEach(s=>{
+      const e = s.entries.find(e=>e.exerciseId===exId); if(!e) return;
+      const best = Math.max(...e.sets.map(st=>e1rm(st.weight,st.reps)));
+      points.push({ x: fmtDate(s.date), y: best });
+    });
+    if (chartInst.current) chartInst.current.destroy();
+    const dark = document.documentElement.classList.contains('dark');
+    chartInst.current = new Chart(chartRef.current, {
+      type:'line',
+      data:{ labels: points.map(p=>p.x), datasets:[{ label:'est. 1RM (kg)', data: points.map(p=>p.y), borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,.15)', fill:true, tension:.3, pointRadius:4, pointBackgroundColor:'#3b82f6' }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ x:{ ticks:{color: dark?'#888':'#666', maxRotation:0, autoSkip:true, maxTicksLimit:5}, grid:{display:false} }, y:{ ticks:{color: dark?'#888':'#666'}, grid:{color: dark?'#262626':'#eee'} } } }
+    });
+    return ()=>{ if(chartInst.current) chartInst.current.destroy(); };
+  }, [exId, sessions]);
+
+  // body weight chart
+  useEffect(()=>{
+    if (!bodyRef.current || !weeklyVol.length) return;
+    if (bodyInst.current) bodyInst.current.destroy();
+    const dark = document.documentElement.classList.contains('dark');
+    bodyInst.current = new Chart(bodyRef.current, {
+      type:'bar',
+      data:{ labels: weeklyVol.map(([k])=>k.split('-W')[1]?'W'+k.split('-W')[1]:k), datasets:[{ label:'Volume', data: weeklyVol.map(([,v])=>Math.round(v)), backgroundColor:'#6366f1', borderRadius:6 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ x:{ ticks:{color:dark?'#888':'#666'}, grid:{display:false} }, y:{ ticks:{color:dark?'#888':'#666'}, grid:{color:dark?'#262626':'#eee'} } } }
+    });
+    return ()=>{ if(bodyInst.current) bodyInst.current.destroy(); };
+  }, [weeklyVol]);
+
+  return (
+    <Screen>
+      <h1 className="text-3xl font-extrabold pt-2">ความก้าวหน้า</h1>
+
+      <BodyWeightCard/>
+      <MeasurementsCard/>
+      <AchievementsCard/>
+
+      {sessions.length===0 && <Empty title="ยังไม่มีข้อมูลเทรน" sub="เริ่มเทรนครั้งแรกแล้วกลับมาดูกราฟพัฒนาการ"/>}
+
+      {sessions.length>0 && <>
+      <MuscleBalanceCard/>
+      <CalendarHeatmap sessions={sessions}/>
+
+      <Card className="p-4 mt-4">
+        <p className="font-bold mb-1">Volume รายสัปดาห์ (kg)</p>
+        <div className="h-44"><canvas ref={bodyRef}/></div>
+      </Card>
+
+      <Card className="p-4 mt-4">
+        <div className="flex items-center justify-between mb-2">
+          <p className="font-bold">กราฟ est. 1RM</p>
+        </div>
+        <select value={exId} onChange={e=>setExId(e.target.value)} className="input mb-3">
+          {trainedExs.map(id=><option key={id} value={id}>{exById(id)?.th||id}</option>)}
+        </select>
+        <div className="h-44"><canvas ref={chartRef}/></div>
+      </Card>
+
+      <h3 className="font-bold mt-6 mb-2 flex items-center gap-2"><Icon d={I.trophy} className="w-5 h-5 text-amber-500"/> Personal Records</h3>
+      <div className="space-y-2">
+        {prs.slice(0,10).map(pr=>(
+          <Card key={pr.id} className="p-3 flex items-center justify-between">
+            <div>
+              <p className="font-semibold">{exById(pr.id)?.th||pr.id}</p>
+              <p className="text-xs text-neutral-500">{dispW(pr.weight,unit)}{uLabel(unit)} × {pr.reps} · {fmtDate(pr.date)}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-xl font-extrabold text-blue-600">{dispW(pr.e1rm,unit)}</p>
+              <p className="text-[10px] text-neutral-400">{uLabel(unit)} 1RM</p>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <h3 className="font-bold mt-6 mb-2">ประวัติการเทรน</h3>
+      <input value={histQ} onChange={e=>setHistQ(e.target.value)} placeholder="🔍 ค้นหาชื่อ / วันที่" className="input mb-2"/>
+      <div className="space-y-2">
+        {sessions.filter(s=> !histQ || s.name.includes(histQ) || fmtDate(s.date).includes(histQ)).map(s=>(
+          <Card key={s.id} className="p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="font-semibold truncate">{s.name}</p>
+                <p className="text-xs text-neutral-500">{fmtDate(s.date)} · {fmtClock(s.duration||0)} · {dispW(Math.round(sessionVolume(s)),unit).toLocaleString()} {uLabel(unit)}</p>
+              </div>
+              <div className="flex gap-1 shrink-0">
+                <IconBtn icon={I.edit} onClick={()=>setEditSession(s)}/>
+                <IconBtn icon={I.trash} danger onClick={()=>{ if(confirm('ลบประวัตินี้?')) dispatch({type:'DELETE_SESSION', id:s.id}); }}/>
+              </div>
+            </div>
+            {s.note && <p className="text-xs text-neutral-500 mt-1 italic">"{s.note}"</p>}
+          </Card>
+        ))}
+      </div>
+      </>}
+      {editSession && <SessionEditor session={editSession} onClose={()=>setEditSession(null)}/>}
+    </Screen>
+  );
+}
+
+/* ============================================================
+   12) TOOLS (1RM, plate calc) + SETTINGS
+   ============================================================ */
+
+function OneRMCalc() {
+  const { state } = useApp(); const unit = state.settings.unit || 'kg';
+  const [w, setW] = useState(unit==='lb'?135:60); const [r, setR] = useState(5);
+  const max = e1rm(+w||0, +r||1);
+  const step = unit==='lb'?5:2.5;
+  const pcts = [100,95,90,85,80,75,70,65,60];
+  return (
+    <div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label={`น้ำหนัก (${uLabel(unit)})`}><input type="number" inputMode="decimal" value={w} onChange={e=>setW(e.target.value)} className="input"/></Field>
+        <Field label="จำนวนครั้ง (reps)"><input type="number" inputMode="numeric" value={r} onChange={e=>setR(e.target.value)} className="input"/></Field>
+      </div>
+      <Card className="p-4 mt-4 text-center bg-blue-50 dark:bg-blue-500/10 border-0">
+        <p className="text-sm text-neutral-500">est. 1RM</p>
+        <p className="text-4xl font-extrabold text-blue-600">{max} <span className="text-lg">{uLabel(unit)}</span></p>
+        <p className="text-xs text-neutral-400 mt-1">Epley {epley(+w||0,+r||1)} · Brzycki {brzycki(+w||0,+r||1)}</p>
+      </Card>
+      <p className="font-semibold mt-4 mb-2 text-sm">% ของ 1RM</p>
+      <div className="grid grid-cols-3 gap-2">
+        {pcts.map(p=>(
+          <div key={p} className="bg-neutral-100 dark:bg-neutral-800 rounded-lg p-2 text-center">
+            <p className="text-xs text-neutral-500">{p}%</p>
+            <p className="font-bold">{Math.round(max*p/100/step)*step}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PlateCalc() {
+  const { state } = useApp(); const unit = state.settings.unit || 'kg';
+  const barDefault = unit==='lb'?45:20;
+  const [target, setTarget] = useState(unit==='lb'?135:60); const [bar, setBar] = useState(barDefault);
+  const res = calcPlates(+target||0, +bar||0, unit);
+  const colors = { 45:'bg-red-500',35:'bg-blue-500',25:'bg-red-500',20:'bg-blue-500',15:'bg-yellow-500',10:'bg-green-600',5:'bg-neutral-300 text-neutral-800',2.5:'bg-neutral-500',1.25:'bg-neutral-400' };
+  return (
+    <div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label={`น้ำหนักรวม (${uLabel(unit)})`}><input type="number" inputMode="decimal" value={target} onChange={e=>setTarget(e.target.value)} className="input"/></Field>
+        <Field label={`น้ำหนักบาร์ (${uLabel(unit)})`}><input type="number" inputMode="decimal" value={bar} onChange={e=>setBar(e.target.value)} className="input"/></Field>
+      </div>
+      <Card className="p-4 mt-4">
+        <p className="text-sm text-neutral-500 mb-2 text-center">ใส่แผ่นต่อข้าง ({res.per} {uLabel(unit)}/ข้าง)</p>
+        {res.perSide.length ? (
+          <div className="flex items-center justify-center gap-1 flex-wrap">
+            {res.perSide.map((p,i)=>(
+              <span key={i} className={`${colors[p]||'bg-neutral-400'} text-white text-xs font-bold rounded px-2 py-3 min-w-[36px] text-center`}>{p}</span>
+            ))}
+          </div>
+        ) : <p className="text-center text-neutral-400">ใส่แค่บาร์เปล่า</p>}
+        {!res.ok && <p className="text-center text-xs text-red-500 mt-2">⚠️ ลงตัวไม่พอดี เหลือ {res.leftover?.toFixed(2)} {uLabel(unit)}/ข้าง</p>}
+      </Card>
+    </div>
+  );
+}
+
+function Settings({ go }) {
+  const { state, dispatch } = useApp();
+  const { profile, settings, program } = state;
+  const [tool, setTool] = useState(null);
+
+  const exportJSON = () => { exportData(state); dispatch({type:'SET_SETTINGS', payload:{ lastBackup: Date.now() }}); };
+  const importJSON = (e) => {
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { try { const data = JSON.parse(reader.result); if(confirm('นำเข้าข้อมูลนี้? (ข้อมูลปัจจุบันจะถูกแทนที่)')) { dispatch({type:'REPLACE_ALL', payload:data}); alert('นำเข้าสำเร็จ ✅'); } } catch { alert('ไฟล์ไม่ถูกต้อง'); } };
+    reader.readAsText(file);
+  };
+  const regenerate = () => { const p = buildProgram(profile); dispatch({type:'SET_PROGRAM', payload:p, schedule: buildSchedule(profile.days)}); alert('สร้างโปรแกรมใหม่แล้ว!'); };
+  const toggleDark = () => { const d = !settings.dark; document.documentElement.classList.toggle('dark', d); dispatch({type:'SET_SETTINGS', payload:{dark:d}}); };
+
+  return (
+    <Screen>
+      <h1 className="text-3xl font-extrabold pt-2">ตั้งค่า</h1>
+
+      {profile && (
+        <Card className="p-4 mt-4 flex items-center gap-4">
+          <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 grid place-items-center text-3xl">{profile.sex==='female'?'🙋‍♀️':'🙋‍♂️'}</div>
+          <div className="flex-1">
+            <p className="font-bold text-lg">{profile.name||'ผู้ใช้'}</p>
+            <p className="text-sm text-neutral-500">{GOAL_LABELS[profile.goal]} · {LEVEL_LABELS[profile.level]} · {profile.days} วัน/สัปดาห์</p>
+            <p className="text-xs text-neutral-400">{profile.age} ปี · {profile.height}cm · {profile.weight}kg</p>
+          </div>
+        </Card>
+      )}
+
+      <SectionTitle>เครื่องมือ</SectionTitle>
+      <div className="grid grid-cols-2 gap-3">
+        <ToolBtn emoji="🧮" label="1RM Calculator" onClick={()=>setTool('1rm')}/>
+        <ToolBtn emoji="🏋️" label="Plate Calculator" onClick={()=>setTool('plate')}/>
+      </div>
+
+      <SectionTitle>โปรแกรม</SectionTitle>
+      <Card className="divide-y divide-neutral-100 dark:divide-neutral-800">
+        <Row label="โปรแกรมปัจจุบัน" value={program?.name||'—'}/>
+        <RowBtn label="🔄 สร้างโปรแกรมใหม่จากโปรไฟล์" onClick={regenerate}/>
+        <RowBtn label="✏️ แก้ไขโปรไฟล์ / เป้าหมาย" onClick={()=>go('onboard')}/>
+      </Card>
+
+      <SectionTitle>ทั่วไป</SectionTitle>
+      <Card className="divide-y divide-neutral-100 dark:divide-neutral-800">
+        <RowToggle label="🌙 โหมดมืด" on={settings.dark} onClick={toggleDark}/>
+        <RowToggle label="🔔 เสียงเตือนพักเซ็ต" on={settings.sound} onClick={()=>dispatch({type:'SET_SETTINGS', payload:{sound:!settings.sound}})}/>
+        <div className="flex items-center justify-between p-4">
+          <span className="font-medium">⚖️ หน่วยน้ำหนัก</span>
+          <div className="flex gap-1 bg-neutral-100 dark:bg-neutral-800 rounded-full p-1">
+            {['kg','lb'].map(u=>(
+              <button key={u} onClick={()=>dispatch({type:'SET_SETTINGS', payload:{unit:u}})} className={`px-4 py-1.5 rounded-full text-sm font-semibold transition ${(settings.unit||'kg')===u?'bg-blue-600 text-white':'text-neutral-500'}`}>{u}</button>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      <SectionTitle>ข้อมูล (สำคัญ — สำรองไว้!)</SectionTitle>
+      <Card className="divide-y divide-neutral-100 dark:divide-neutral-800">
+        <RowBtn label={`⬇️ Export ข้อมูลเป็น JSON${settings.lastBackup?`  ·  ล่าสุด ${fmtDate(settings.lastBackup)}`:''}`} onClick={exportJSON} icon={I.dl}/>
+        <label className="flex items-center justify-between p-4 active:bg-neutral-50 dark:active:bg-neutral-800/50 cursor-pointer">
+          <span className="font-medium">⬆️ Import ข้อมูลจากไฟล์</span>
+          <Icon d={I.up} className="w-5 h-5 text-neutral-400"/>
+          <input type="file" accept="application/json" onChange={importJSON} className="hidden"/>
+        </label>
+        <RowBtn label="🗑️ ล้างข้อมูลทั้งหมด" danger onClick={()=>{ if(confirm('ลบข้อมูลทั้งหมดและเริ่มใหม่?')) { localStorage.removeItem(STORE_KEY); location.reload(); } }}/>
+      </Card>
+
+      <p className="text-center text-xs text-neutral-400 mt-6">FitLog · เก็บข้อมูลในเครื่องนี้เท่านั้น<br/>อย่าลืม Export สำรองเป็นระยะ 💾</p>
+
+      <Sheet open={tool==='1rm'} onClose={()=>setTool(null)} title="1RM Calculator"><OneRMCalc/></Sheet>
+      <Sheet open={tool==='plate'} onClose={()=>setTool(null)} title="Plate Calculator"><PlateCalc/></Sheet>
+    </Screen>
+  );
+}
+
+const SectionTitle = ({children}) => <h3 className="font-bold text-neutral-500 text-sm mt-6 mb-2 px-1">{children}</h3>;
+const ToolBtn = ({emoji,label,onClick}) => (
+  <button onClick={onClick} className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-4 text-center active:scale-95 transition">
+    <div className="text-3xl mb-1">{emoji}</div><div className="text-sm font-semibold">{label}</div>
+  </button>
+);
+const Row = ({label,value}) => <div className="flex items-center justify-between p-4"><span className="font-medium">{label}</span><span className="text-neutral-500">{value}</span></div>;
+const RowBtn = ({label,onClick,danger}) => <button onClick={onClick} className={`w-full text-left p-4 font-medium active:bg-neutral-50 dark:active:bg-neutral-800/50 ${danger?'text-red-500':''}`}>{label}</button>;
+const RowToggle = ({label,on,onClick}) => (
+  <button onClick={onClick} className="w-full flex items-center justify-between p-4 active:bg-neutral-50 dark:active:bg-neutral-800/50">
+    <span className="font-medium">{label}</span>
+    <span className={`w-12 h-7 rounded-full transition relative ${on?'bg-blue-600':'bg-neutral-300 dark:bg-neutral-700'}`}>
+      <span className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${on?'left-6':'left-1'}`}/>
+    </span>
+  </button>
+);
+
+/* ============================================================
+   13) SHARED LAYOUT
+   ============================================================ */
+
+const Screen = ({children}) => <div className="px-4 pb-safe fade-in max-w-lg mx-auto">{children}</div>;
+const Empty = ({title,sub}) => (
+  <div className="text-center py-16">
+    <div className="text-5xl mb-3">🗂️</div>
+    <p className="font-bold text-lg">{title}</p>
+    <p className="text-neutral-500 text-sm">{sub}</p>
+  </div>
+);
+
+function TabBar({ tab, setTab }) {
+  const tabs = [
+    ['dashboard','หน้าหลัก',I.home],
+    ['schedule','ตาราง',I.cal],
+    ['library','คลังท่า',I.book],
+    ['progress','ก้าวหน้า',I.chart],
+    ['settings','ตั้งค่า',I.cog],
+  ];
+  return (
+    <nav className="fixed bottom-0 inset-x-0 z-30 glass border-t border-neutral-200/60 dark:border-white/5 safe-bottom">
+      <div className="flex max-w-lg mx-auto px-1 pt-1.5">
+        {tabs.map(([id,label,icon])=>(
+          <button key={id} onClick={()=>setTab(id)} className={`flex-1 flex flex-col items-center gap-1 py-1 min-h-[54px] justify-center transition ${tab===id?'text-blue-600':'text-neutral-400'}`}>
+            <span className={`grid place-items-center w-14 h-7 rounded-full transition-all duration-200 ${tab===id?'bg-blue-100 dark:bg-blue-500/20':''}`}>
+              <Icon d={icon} className="w-[22px] h-[22px]" stroke={tab===id?2.5:2}/>
+            </span>
+            <span className={`text-[10px] ${tab===id?'font-bold':'font-medium'}`}>{label}</span>
+          </button>
+        ))}
+      </div>
+    </nav>
+  );
+}
+
+/* ============================================================
+   14) ROOT APP
+   ============================================================ */
+
+function App() {
+  const [state, dispatch] = useReducer(reducer, null, () => mergeState(loadState()));
+  const [tab, setTab] = useState('dashboard');
+  const [route, setRoute] = useState({ name:'tabs' });
+
+  // persist
+  useEffect(()=>{ saveState(state); }, [state]);
+  // apply dark on mount
+  useEffect(()=>{ document.documentElement.classList.toggle('dark', state.settings?.dark !== false); }, []);
+
+  const go = (name, params={}) => {
+    if (['dashboard','schedule','library','progress','settings'].includes(name)) { setTab(name); setRoute({name:'tabs'}); window.scrollTo(0,0); return; }
+    if (name==='onboard') { setRoute({name:'onboard'}); return; }
+    setRoute({ name, ...params }); window.scrollTo(0,0);
+  };
+
+  const finishOnboard = (profile) => {
+    const program = buildProgram(profile);
+    const schedule = buildSchedule(profile.days);
+    dispatch({ type:'SET_PROFILE', payload: profile });
+    dispatch({ type:'SET_PROGRAM', payload: program, schedule });
+    setRoute({ name:'tabs' }); setTab('dashboard');
+  };
+
+  const ctx = { state, dispatch };
+
+  // ยังไม่ onboard
+  if (!state.profile || route.name==='onboard') {
+    return <AppCtx.Provider value={ctx}><Onboarding onDone={finishOnboard}/></AppCtx.Provider>;
+  }
+
+  // full screen route: workout log
+  if (route.name==='log') {
+    return <AppCtx.Provider value={ctx}><WorkoutLog workoutIdx={route.workoutIdx} go={go}/></AppCtx.Provider>;
+  }
+  if (route.name==='editWorkout') {
+    return <AppCtx.Provider value={ctx}><WorkoutEditor workoutIdx={route.workoutIdx} go={go}/></AppCtx.Provider>;
+  }
+
+  return (
+    <AppCtx.Provider value={ctx}>
+      <div className="min-h-screen safe-top">
+        {tab==='dashboard' && <Dashboard go={go}/>}
+        {tab==='schedule' && <SchedulePage go={go}/>}
+        {tab==='library' && <Library/>}
+        {tab==='progress' && <Progress go={go}/>}
+        {tab==='settings' && <Settings go={go}/>}
+      </div>
+      <TabBar tab={tab} setTab={(t)=>{setTab(t); window.scrollTo(0,0);}}/>
+    </AppCtx.Provider>
+  );
+}
+
+/* input styles via tailwind @apply alternative — ใช้ class กลาง */
+const style = document.createElement('style');
+style.textContent = `
+  * { -webkit-font-smoothing: antialiased; }
+  body { background: #fafafa; }
+  body::before {
+    content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
+    background:
+      radial-gradient(900px 500px at 100% -5%, rgba(59,130,246,.10), transparent 60%),
+      radial-gradient(700px 400px at -10% 0%, rgba(99,102,241,.08), transparent 55%);
+  }
+  .dark body { background: #07070a; }
+  .dark body::before {
+    background:
+      radial-gradient(1000px 560px at 100% -8%, rgba(59,130,246,.16), transparent 60%),
+      radial-gradient(760px 440px at -12% 2%, rgba(99,102,241,.12), transparent 55%);
+  }
+  .input { width:100%; min-height:48px; padding:0 14px; border-radius:14px; background:#fff; border:1px solid rgb(228 228 231); outline:none; transition:border-color .15s, box-shadow .15s; }
+  .dark .input { background:rgb(24 24 27); border-color:rgb(39 39 42); color:#fff; }
+  .input:focus { border-color:#3b82f6; box-shadow:0 0 0 4px rgba(59,130,246,.12); }
+  textarea.input { padding:12px 14px; min-height:auto; }
+  .setinput { width:100%; height:44px; text-align:center; border-radius:11px; background:#fff; border:1px solid rgb(228 228 231); outline:none; font-weight:600; transition:border-color .15s, box-shadow .15s; }
+  .dark .setinput { background:rgb(24 24 27); border-color:rgb(39 39 42); color:#fff; }
+  .setinput:focus { border-color:#3b82f6; box-shadow:0 0 0 4px rgba(59,130,246,.12); }
+  .glass { background:rgba(255,255,255,.72); backdrop-filter:saturate(180%) blur(20px); -webkit-backdrop-filter:saturate(180%) blur(20px); }
+  .dark .glass { background:rgba(10,10,12,.72); }
+  @media (prefers-reduced-motion:no-preference){ .fade-in{animation:fadeIn .28s cubic-bezier(.22,1,.36,1) both;} }
+`;
+document.head.appendChild(style);
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+  </script>
+
+  <script>
+    // คอมไพล์ JSX เองด้วย classic runtime (React.createElement) เพื่อเลี่ยง import ของ automatic runtime
+    (function(){
+      try {
+        var code = document.getElementById('app-code').textContent;
+        var out = Babel.transform(code, {
+          presets: [['react', { runtime: 'classic' }]],
+          filename: 'app.jsx'
+        }).code;
+        var s = document.createElement('script');
+        s.textContent = out;
+        document.body.appendChild(s);
+      } catch (e) {
+        window.__err('คอมไพล์ไม่ผ่าน:\n' + (e.message || e));
+      }
+    })();
+  </script>
+</body>
+</html>
